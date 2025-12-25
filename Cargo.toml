@@ -1,0 +1,26 @@
+[package]
+name = "ncd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ncd"
+path = "src/main.rs"
+
+[profile.release]
+opt-level =  3      # Optimize for size
+lto = true          # Link Time Optimization
+codegen-units = 1   # Better optimization
+panic = 'abort'     # No stack unwinding
+strip = true        # Strip symbols automatically
+
+[dependencies]
+lexopt = "0.3.1"
+anyhow = "1.0.100"
+tempfile = "3.23.0"
+glob = "0.3.3"
+regex = "1.12.2"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"

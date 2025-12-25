@@ -1,0 +1,3 @@
+[build]
+# This forces the build output back to your project folder
+target-dir = "target"
