@@ -4,40 +4,45 @@ mod tests {
     use std::path::PathBuf;
     use crate::*;
     use tempfile::tempdir;
-    use crate::DEFAULT_TEST_ROOT;
 
-    #[cfg(test)]
+    /// Helper to generate SearchOptions on the fly for tests.
+    /// This keeps the test calls clean and matches the new 2-argument signature.
+    fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
+        SearchOptions {
+            mode,
+            exact,
+            list: false, // Default to false for unit tests
+            mock_path: mock,
+        }
+    }
+
+    /// Dynamically resolves a test root based on environment or persistent defaults.
     fn get_test_root() -> PathBuf {
-        // 1. Try Environment Variable override
         if let Ok(env_path) = env::var("NCD_TEST_DIR") {
             let p = PathBuf::from(env_path);
             if fs::create_dir_all(&p).is_ok() { return p; }
         }
 
-        // 2. Try the preferred persistent root (your variable)
         let persistent_root = PathBuf::from(DEFAULT_TEST_ROOT);
         if fs::create_dir_all(&persistent_root).is_ok() {
             return persistent_root;
         }
 
-        // 3. Absolute fallback: OS Temp Directory
         let temp = env::temp_dir().join("ncd_tests");
         fs::create_dir_all(&temp).ok();
         temp
     }
 
-
-    // Detect valid persistent test root
     #[test]
     fn test_junction_follow() {
-        // V:\temp is a junction to V:\tmp
         let root = PathBuf::from("V:\\temp\\ncd_tests");
-        if !root.exists() { return; } // Skip if environment differs
+        if !root.exists() { return; }
 
         let test_dir = root.join("JunctionFollow");
         fs::create_dir_all(&test_dir).ok();
 
-        let res = search_cdpath("JunctionFollow", CdMode::Origin, false, false, Some(root.into_os_string()));
+        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
+        let res = search_cdpath("JunctionFollow", &opts);
         assert!(!res.is_empty());
     }
 
@@ -51,21 +56,24 @@ mod tests {
         if !proj.exists() { fs::create_dir(&proj).unwrap(); }
 
         let actual_name = proj.canonicalize().unwrap().file_name().unwrap().to_str().unwrap().to_string();
-        let mock = Some(root.into_os_string());
+        let mock = root.into_os_string();
 
-        // Fuzzy
-        let res_f = search_cdpath("mixedcase123", CdMode::Origin, false, false, mock.clone());
+        // Fuzzy Match
+        let opts_f = get_opts(CdMode::Origin, false, Some(mock.clone()));
+        let res_f = search_cdpath("mixedcase123", &opts_f);
         assert!(!res_f.is_empty());
 
-        // Exact
-        let res_e = search_cdpath("mixedcase123", CdMode::Origin, true, false, mock);
+        // Exact Match
+        let opts_e = get_opts(CdMode::Origin, true, Some(mock));
+        let res_e = search_cdpath("mixedcase123", &opts_e);
         if actual_name == "mixedcase123" { assert!(!res_e.is_empty()); }
         else { assert!(res_e.is_empty()); }
     }
 
     #[test]
     fn test_dot_traversal() {
-        let result = evaluate_jump("...", CdMode::Origin, false, false);
+        let opts = get_opts(CdMode::Origin, false, None);
+        let result = evaluate_jump("...", &opts);
         assert!(!result.is_empty());
         let current = env::current_dir().unwrap();
         let expected = current.parent().unwrap().parent().unwrap();
@@ -74,7 +82,8 @@ mod tests {
 
     #[test]
     fn test_extreme_ellipsis() {
-        let result = evaluate_jump(".....", CdMode::Origin, false, false);
+        let opts = get_opts(CdMode::Origin, false, None);
+        let result = evaluate_jump(".....", &opts);
         assert!(!result.is_empty());
         let mut expected = env::current_dir().unwrap();
         for _ in 0..4 {
@@ -90,10 +99,12 @@ mod tests {
         fs::create_dir(&proj_path).unwrap();
         let mock_env = Some(dir.path().as_os_str().to_os_string());
 
-        let res_fuzzy = search_cdpath("myproject", CdMode::Origin, false, false, mock_env.clone());
+        let opts_f = get_opts(CdMode::Origin, false, mock_env.clone());
+        let res_fuzzy = search_cdpath("myproject", &opts_f);
         assert!(!res_fuzzy.is_empty());
 
-        let res_exact = search_cdpath("myproject", CdMode::Origin, true, false, mock_env);
+        let opts_e = get_opts(CdMode::Origin, true, mock_env);
+        let res_exact = search_cdpath("myproject", &opts_e);
         assert!(res_exact.is_empty());
     }
 
@@ -104,14 +115,16 @@ mod tests {
         fs::create_dir(&bookmark).unwrap();
         let mock_cdpath = Some(bookmark.as_os_str().to_os_string());
 
-        let res = search_cdpath("Work", CdMode::Hybrid, true, false, mock_cdpath);
+        let opts = get_opts(CdMode::Hybrid, true, mock_cdpath);
+        let res = search_cdpath("Work", &opts);
         assert!(!res.is_empty());
         assert_eq!(res[0].canonicalize().unwrap(), bookmark.canonicalize().unwrap());
     }
 
     #[test]
     fn test_root_anchored_logic() {
-        let result = evaluate_jump("\\Projects", CdMode::Origin, false, false);
+        let opts = get_opts(CdMode::Origin, false, None);
+        let result = evaluate_jump("\\Projects", &opts);
         assert!(!result.is_empty());
         let path_str = result[0].to_string_lossy();
         assert!(path_str.contains(":\\Projects"));
@@ -123,7 +136,8 @@ mod tests {
         fs::create_dir(dir.path().join("testing.1")).unwrap();
         let mock_path = Some(dir.path().as_os_str().to_os_string());
 
-        let res = search_cdpath("test*.*", CdMode::Origin, false, false, mock_path);
+        let opts = get_opts(CdMode::Origin, false, mock_path);
+        let res = search_cdpath("test*.*", &opts);
         assert!(!res.is_empty());
         assert!(res[0].to_string_lossy().contains("testing.1"));
     }
@@ -135,38 +149,104 @@ mod tests {
         let child = parent.join("child_glob");
         fs::create_dir_all(&child).unwrap();
 
-        // Set CWD to the child
         let original_cwd = env::current_dir().unwrap();
         env::set_current_dir(&child).unwrap();
 
-        // Try to jump up one level and find "child_glob" via glob
-        // '..' is parent, 'child*' is the search
-        let res = evaluate_jump("..\\child*", CdMode::Origin, false, false);
+        let opts = get_opts(CdMode::Origin, false, None);
+        // Using portable separator check via evaluate_jump logic
+        let res = evaluate_jump("..\\child*", &opts);
 
         env::set_current_dir(original_cwd).unwrap();
 
         assert!(!res.is_empty());
         assert!(res[0].to_string_lossy().contains("child_glob"));
     }
+
     #[test]
     fn test_root_anchored_wildcard() {
         let root = get_test_root();
         let test_dir = root.join("WildcardTarget");
         let _ = fs::create_dir_all(&test_dir);
 
-        // Navigate to the root of our test space
         let original_cwd = env::current_dir().unwrap();
         env::set_current_dir(&root).unwrap();
 
-        // Search for the wildcard relative to where we are
         let query = "Wildcard*";
-        let res = evaluate_jump(query, CdMode::Hybrid, false, false);
+        let opts = get_opts(CdMode::Hybrid, false, None);
+        let res = evaluate_jump(query, &opts);
 
-        // Cleanup
         env::set_current_dir(original_cwd).unwrap();
 
         assert!(!res.is_empty(), "Wildcard expansion failed in test root");
         assert!(res[0].to_string_lossy().contains("WildcardTarget"));
     }
-}
 
+    #[test]
+    fn test_ellipsis_sibling_resolution() {
+        use std::fs;
+        let temp = tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+
+        // 1. Setup: These are siblings inside 'root'
+        let target = root.join("SiblingTarget");
+        let cwd_mock = root.join("CurrentDir"); // This is our "Fake" CWD
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&cwd_mock).unwrap();
+
+        // 2. Setup Options
+        let opts = SearchOptions {
+            mode: CdMode::Origin,
+            exact: false,
+            list: false,
+            mock_path: None,
+        };
+
+        // 3. Execute jump: Pass cwd_mock directly as the 'base'
+        // This is the "Fortress" move: No env::set_current_dir needed!
+        let res = handle_ellipsis("..", Some("SiblingTarget"), &opts, cwd_mock);
+
+        // 4. Assert
+        let matches = res.expect("Ellipsis handler failed");
+        assert!(!matches.is_empty(), "Failed to find Sibling!");
+
+        let found = matches[0].canonicalize().unwrap();
+        let expected = target.canonicalize().unwrap();
+        assert_eq!(found, expected, "Resolved to wrong path.");
+    }
+
+    #[test]
+    fn test_ellipsis_sibling_resolution2() {
+        use std::fs;
+        let temp = tempdir().unwrap();
+        // Canonicalize is vital on Windows to resolve short-names (PROGRA~1 style)
+        let root = temp.path().canonicalize().unwrap();
+
+        let target_name = "SiblingTarget";
+        // Setup: target is a sibling of the temp root
+        let target = root.parent().unwrap().join("SiblingTarget");
+        let cwd_mock = root.join("CurrentDir");
+
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&cwd_mock).unwrap();
+
+        // No env::set_current_dir!
+        // We just define what our world looks like via this variable.
+
+        let opts = SearchOptions {
+            mode: CdMode::Origin,
+            exact: false,
+            list: false,
+            mock_path: None,
+        };
+
+        // INJECTION: Pass cwd_mock as the 'base'
+        let res = handle_ellipsis("...", Some(target_name), &opts, cwd_mock);
+
+        let matches = res.expect("Should return a result");
+        assert!(!matches.is_empty());
+
+        let found_path = matches[0].canonicalize().unwrap();
+        let expected_path = target.canonicalize().unwrap();
+        assert_eq!(found_path, expected_path);
+    }
+}
