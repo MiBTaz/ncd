@@ -311,4 +311,30 @@ mod tests {
 
         fs::remove_dir_all(sandbox).ok();
     }
+
+    #[test]
+    fn test_drive_root_regression() {
+        let path = PathBuf::from("V:");
+        let tail = Some("Projects");
+        let results = reattach_tail(vec![path], tail);
+
+        // The "Murder" check: V:Projects is drive-relative, V:\Projects is absolute.
+        let output = results[0].to_string_lossy();
+        assert!(output.contains('\\') || output.contains('/'), "Path was joined without separator: {}", output);
+        assert_eq!(output, "V:\\Projects");
+    }
+    #[test]
+    fn test_drive_root_regression_two() {
+        let path = PathBuf::from("V:");
+        let tail = Some("Projects");
+        let results = reattach_tail(vec![path], tail);
+
+        let output = results[0].to_string_lossy();
+        // Use the native check instead of hardcoded strings
+        let has_sep = output.chars().any(std::path::is_separator);
+
+        assert!(has_sep, "Murder detected: Path was joined without separator: {}", output);
+        assert!(output.starts_with("V:"), "Drive letter lost");
+        assert!(output.ends_with("Projects"), "Tail lost");
+    }
 }

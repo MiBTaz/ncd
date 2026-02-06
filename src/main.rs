@@ -143,7 +143,8 @@ pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     // 1. ANCHOR ANALYSIS
     // Anchors determine the "Search Root".
     // If anchored with a slash, we ignore the CWD and jump straight to the Volume Root.
-    let is_root_anchored = query.chars().next().map(std::path::is_separator).unwrap_or(false);
+    let is_root_anchored = query.chars().next().map(std::path::is_separator).unwrap_or(false)
+        || (query.len() >= 3 && query.get(1..3) == Some(":\\"));
     let p = PathBuf::from(query);
     let (head, tail) = split_query(query, is_root_anchored);
 
@@ -185,6 +186,7 @@ pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
 
 /// Helper to ensure the "tail" of a query is preserved after a fuzzy match.
 /// Example: query 'proj/src' -> engine finds 'V:\Projects\ProjectA' -> returns 'V:\Projects\ProjectA\src'
+/*
 fn reattach_tail(matches: Vec<PathBuf>, tail: Option<&str>) -> Vec<PathBuf> {
     matches.into_iter().map(|mut path| {
         if let Some(t) = tail {
@@ -193,6 +195,21 @@ fn reattach_tail(matches: Vec<PathBuf>, tail: Option<&str>) -> Vec<PathBuf> {
         path
     }).collect()
 }
+*/
+fn reattach_tail(matches: Vec<PathBuf>, tail: Option<&str>) -> Vec<PathBuf> {
+    matches.into_iter().map(|mut path| {
+        if let Some(t) = tail {
+            let s = path.to_string_lossy();
+            if s.len() == 2 && s.get(1..2) == Some(":") {
+                path.push(std::path::MAIN_SEPARATOR.to_string());
+            }
+            path.push(t);
+        }
+        path
+    }).collect()
+}
+
+
 
 /// The main search loop. It iterates through possible search roots (CWD, CDPATH)
 /// and applies a 3-phase matching strategy to each.
@@ -348,6 +365,20 @@ fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
     let parts: Vec<&str> = trimmed.splitn(2, std::path::is_separator).collect();
     (parts[0], parts.get(1).copied())
 }
+
+/*
+fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
+    if anchored {
+        match query.rfind(std::path::is_separator) {
+            Some(pos) => (&query[..pos], Some(&query[pos + 1..])),
+            None => (query, None),
+        }
+    } else {
+        let parts: Vec<&str> = query.splitn(2, std::path::is_separator).collect();
+        (parts[0], parts.get(1).copied())
+    }
+}
+ */
 
 fn is_ellipsis(head: &str) -> bool {
     head.len() > 1 && head.chars().all(|c| c == '.')
