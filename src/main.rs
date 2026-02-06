@@ -1,3 +1,8 @@
+// src/main.rs
+// License: PolyForm Noncommercial 1.0.0 (Personal & Research Use Only)
+// Commercial use is strictly prohibited without a separate agreement.
+// Redistribution is permitted provided this notice and license remain intact.
+//
 //! # NCD (Navigation Control Directory)
 //!
 //! NCD is a high-speed directory jumper optimized for Windows development environments.
@@ -85,7 +90,8 @@ fn run() -> Result<(), NcdError> {
     }
 
     // Default to Home (~) if no query is provided.
-    let q = query.unwrap_or_else(|| "~".to_string());
+    let s = query.unwrap_or_else(|| "~".to_string());
+    let q = s.trim();
 
     // ~ Resolution: Bypasses the search engine for immediate OS profile mapping.
     if q == "~" { return resolve_home(); }
@@ -115,6 +121,19 @@ fn run() -> Result<(), NcdError> {
 /// The central brain of NCD. It deconstructs the user query and routes it
 /// through specialized logic handlers (Ellipsis, Anchors, or CDPATH Search).
 pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
+    let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    if query == "." {
+        return vec![base];
+    }
+
+    if query == ".." {
+        return match base.parent() {
+            Some(p) => vec![p.to_path_buf()],
+            None => vec![base], // Root protection
+        };
+    }
+
     // Standard shell 'last directory' toggle.
     if query == "-" {
         return env::var_os("OLDPWD").map(|os| vec![PathBuf::from(os)]).unwrap_or_default();

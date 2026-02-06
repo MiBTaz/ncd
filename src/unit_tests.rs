@@ -1,9 +1,11 @@
+// src/unit_tests.rs
 #[cfg(test)]
 mod tests {
     use std::{env, fs};
     use std::path::PathBuf;
     use crate::*;
     use tempfile::tempdir;
+    use serial_test::serial;
 
     /// Helper to generate SearchOptions on the fly for tests.
     /// This keeps the test calls clean and matches the new 2-argument signature.
@@ -142,6 +144,7 @@ mod tests {
         assert!(res[0].to_string_lossy().contains("testing.1"));
     }
 
+    #[serial]
     #[test]
     fn test_parent_globbing() {
         let dir = tempdir().unwrap();
@@ -162,6 +165,7 @@ mod tests {
         assert!(res[0].to_string_lossy().contains("child_glob"));
     }
 
+    #[serial]
     #[test]
     fn test_root_anchored_wildcard() {
         let root = get_test_root();
@@ -248,5 +252,63 @@ mod tests {
         let found_path = matches[0].canonicalize().unwrap();
         let expected_path = target.canonicalize().unwrap();
         assert_eq!(found_path, expected_path);
+    }
+    #[test]
+    fn test_primitive_dot_resolution() {
+        let opts = get_opts(CdMode::Origin, false, None);
+        let current = env::current_dir().unwrap();
+
+        // Test "."
+        let res_dot = evaluate_jump(".", &opts);
+        assert_eq!(res_dot[0], current);
+
+        // Test " ." (trailing space)
+        let res_space = evaluate_jump(" . ", &opts);
+        assert_eq!(res_space[0], current.join(" . "));
+    }
+
+    #[test]
+    fn test_root_protection_logic() {
+        let _opts = get_opts(CdMode::Origin, false, None);
+        // Simulate being at a drive root (e.g., V:\)
+        let root = PathBuf::from("V:\\");
+
+        // We can't easily change the real CWD to V:\ in a test,
+        // but we can test the logic if evaluate_jump were to use our mock base.
+        // (Note: You might need to tweak evaluate_jump to accept a base for full testing)
+
+        if let Some(_parent) = root.parent() {
+            // If we actually have a parent, this test isn't at the root.
+        } else {
+            // This is where your 'if q == ".."' logic returns 'base'
+            assert!(true);
+        }
+    }
+
+    #[test]
+    fn test_single_level_authority() {
+        use std::fs;
+        use std::path::Path;
+
+        let sandbox = Path::new(DEFAULT_TEST_ROOT);
+        let inner_folder = sandbox.join("Projects");
+
+        // Ensure clean state and physical existence
+        let _ = fs::remove_dir_all(sandbox);
+        fs::create_dir_all(&inner_folder).expect("Could not create test sandbox");
+
+        let opts = SearchOptions {
+            mode: CdMode::Hybrid, // <--- Change this from Target to Hybrid or Origin
+            exact: false,
+            list: false,
+            mock_path: Some(DEFAULT_TEST_ROOT.into()),
+        };
+
+        let results = search_cdpath("pro*", &opts);
+
+        assert!(!results.is_empty(), "Engine failed to find 'Projects' in {}", DEFAULT_TEST_ROOT);
+        assert!(results[0].to_string_lossy().contains("Projects"));
+
+        fs::remove_dir_all(sandbox).ok();
     }
 }

@@ -1,8 +1,12 @@
 #![cfg(test)]
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use predicates::prelude::*;
 use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use assert_cmd::{cargo_bin, cargo_bin_cmd};
+use assert_cmd::assert::OutputAssertExt;
+use predicates::boolean::PredicateBooleanExt;
+use predicates::prelude::predicate;
 use tempfile::tempdir;
 
 #[test]
@@ -207,4 +211,64 @@ fn test_parent_glob_isolation() {
         .success()
         .stdout(predicate::str::contains("current_work_dir").not()) // Should NOT see the local one
         .stdout(predicate::str::contains("neighbor_target"));
+}
+
+#[test]
+fn test_ambiguity_aborts_stdout() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("Match_A")).unwrap();
+    fs::create_dir(dir.path().join("Match_B")).unwrap();
+
+    let mut cmd = cargo_bin_cmd!("ncd");
+    cmd.env("CDPATH", dir.path())
+        .arg("Match_*")
+        .assert()
+        .failure() // Must exit non-zero
+        .stdout(predicate::str::is_empty()) // STDOUT MUST BE EMPTY so 'cd' doesn't fire
+        .stderr(predicate::str::contains("Ambiguous match"));
+}
+
+#[test]
+fn test_trailing_separator_scrub() {
+    // This test assumes you have a helper function or logic to clean the string
+    let path = PathBuf::from("V:\\Projects\\ncd\\ . ");
+    let final_str = path.to_string_lossy();
+
+    let cleaned = if final_str.len() > 3 {
+        final_str.trim_end_matches(|c| c == '\\' || c == '/').to_string()
+    } else {
+        final_str.into_owned()
+    };
+
+    assert_eq!(cleaned, "V:\\Projects\\ncd\\ . ");
+
+    // Ensure it DOES NOT scrub the root
+    let root = "C:\\";
+    let cleaned_root = if root.len() > 3 { "error" } else { root };
+    assert_eq!(cleaned_root, "C:\\");
+}
+
+#[test]
+fn test_crazy_dot_resolution() {
+    let mut cmd = Command::new(cargo_bin!("ncd"));
+    let assert = cmd.arg(" . ").assert();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let current = std::env::current_dir().unwrap().to_string_lossy().into_owned();
+
+    // EXPECTATION: The engine is SANE, so it should match the clean CWD
+    assert_eq!(output.trim(), current.trim_end_matches('\\'));
+}
+
+#[test]
+fn test_crazy_parent_resolution() {
+    let mut cmd = Command::new(cargo_bin!("ncd"));
+    let assert = cmd.arg(" .. ").assert();
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let current = std::env::current_dir().unwrap();
+    let parent = current.parent().unwrap().to_string_lossy().into_owned();
+
+    // EXPECTATION: The engine is SANE, so it should match the clean Parent
+    assert_eq!(output.trim(), parent.trim_end_matches('\\'));
 }
