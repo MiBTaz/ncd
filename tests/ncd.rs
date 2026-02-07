@@ -272,3 +272,22 @@ fn test_crazy_parent_resolution() {
     // EXPECTATION: The engine is SANE, so it should match the clean Parent
     assert_eq!(output.trim(), parent.trim_end_matches('\\'));
 }
+
+#[test]
+fn test_target_vs_origin_mk2() {
+    // 1. Target mode: "ncd" should match the folder name of the CDPATH entry itself.
+    let mut cmd_target = cargo_bin_cmd!("ncd");
+    cmd_target.env("CDPATH", "V:\\Projects\\ncd")
+        .arg("--cd=target")
+        .arg("ncd")
+        .assert()
+        .success();
+
+    // 2. Origin mode: Should fail because "ncd" isn't INSIDE "V:\Projects\ncd".
+    let mut cmd_origin = cargo_bin_cmd!("ncd");
+    cmd_origin.env("CDPATH", "V:\\Projects\\ncd")
+        .arg("--cd=origin")
+        .arg("ncd")
+        .assert()
+        .failure();
+}

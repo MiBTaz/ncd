@@ -93,8 +93,22 @@ fn run() -> Result<(), NcdError> {
     let s = query.unwrap_or_else(|| "~".to_string());
     let q = s.trim();
 
-    // ~ Resolution: Bypasses the search engine for immediate OS profile mapping.
-    if q == "~" { return resolve_home(); }
+    match q {
+        "." => {
+            let p = env::current_dir().map_err(|e| NcdError::ResolutionFailed(e.to_string()))?;
+            println!("{}", p.display()); return Ok(());
+        }
+        ".." => {
+            let p = env::current_dir().map_err(|e| NcdError::ResolutionFailed(e.to_string()))?;
+            println!("{}", p.parent().unwrap_or(&p).display()); return Ok(());
+        }
+        "~" => return resolve_home(),
+        "-" => {
+            let old = env::var_os("OLDPWD").ok_or(NcdError::ResolutionFailed("OLDPWD not set".into()))?;
+            println!("{}", PathBuf::from(old).display()); return Ok(());
+        }
+        _ => {} // Continue to evaluate_jump
+    }
 
     // Execute the Search Pipeline
     let results = evaluate_jump(&q, &opts);
@@ -122,94 +136,49 @@ fn run() -> Result<(), NcdError> {
 /// through specialized logic handlers (Ellipsis, Anchors, or CDPATH Search).
 pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let is_anchored = query.starts_with(std::path::is_separator) || (
+        query.len() >= 3 &&
+            query.as_bytes()[1] == b':' &&
+            std::path::is_separator(query.chars().nth(2).unwrap_or(' '))
+    );
 
-    if query == "." {
-        return vec![base];
-    }
+    let (head, tails) = split_query(query, is_anchored);
 
-    if query == ".." {
-        return match base.parent() {
-            Some(p) => vec![p.to_path_buf()],
-            None => vec![base], // Root protection
-        };
-    }
+    // This is where the anchor is "kept":
+    let start_roots = if is_anchored {
+        vec![get_drive_root(&base).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("\\"))]
+    } else {
+        vec![base]
+    };
 
-    // Standard shell 'last directory' toggle.
-    if query == "-" {
-        return env::var_os("OLDPWD").map(|os| vec![PathBuf::from(os)]).unwrap_or_default();
-    }
-    let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut all_segments = if head.is_empty() { Vec::new() } else { vec![head] };
+    all_segments.extend(tails);
 
-    // 1. ANCHOR ANALYSIS
-    // Anchors determine the "Search Root".
-    // If anchored with a slash, we ignore the CWD and jump straight to the Volume Root.
-    let is_root_anchored = query.chars().next().map(std::path::is_separator).unwrap_or(false)
-        || (query.len() >= 3 && query.get(1..3) == Some(":\\"));
-    let p = PathBuf::from(query);
-    let (head, tail) = split_query(query, is_root_anchored);
-
-    //  2. THE FAST PATH (Literal/Absolute)
-    // If it's a real, existing path on disk, we take it immediately.
-    // No regex, no scanning, no ambiguity checks.
-    if (is_root_anchored || p.is_absolute()) && p.exists() {
-        if let Ok(abs) = std::path::absolute(&p) { return vec![abs]; }
-    }
-
-    // 3. ELLIPSIS LOGIC
-    // Translates '...' into 'cd ../..'. This is handled before searching
-    // because it relies on path arithmetic rather than directory scanning.
-    if is_ellipsis(head) {
-        // handle_ellipsis now calls search_cdpath which is scoped by get_search_roots
-        return handle_ellipsis(head, tail, opts, base).unwrap_or_default();
-    }
-
-    // 4. THE SEARCH ENGINE FALLBACK
-    // If the path isn't literal, we determine our "Roots" and start searching.
-    // If it was root-anchored but didn't exist as a literal (likely a wildcard),
-    // we search ONLY the root.
-    if is_root_anchored {
-        let root = get_drive_root(&base).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("\\"));
-        let search_opts = SearchOptions {
-            mode: CdMode::Hybrid,
-            exact: opts.exact,
-            list: opts.list,
-            mock_path: Some(root.into_os_string()),
-        };
-        let matches = search_cdpath(head, &search_opts);
-        return reattach_tail(matches, tail);
-    }
-    // 5. THE NAKED FALLTHROUGH
-    // This executes ONLY if none of the above specific protocols matched.
-    let matches = search_cdpath(head, opts);
-    reattach_tail(matches, tail)
+    resolve_path_segments(start_roots, all_segments, opts)
 }
 
-/// Helper to ensure the "tail" of a query is preserved after a fuzzy match.
-/// Example: query 'proj/src' -> engine finds 'V:\Projects\ProjectA' -> returns 'V:\Projects\ProjectA\src'
-/*
-fn reattach_tail(matches: Vec<PathBuf>, tail: Option<&str>) -> Vec<PathBuf> {
-    matches.into_iter().map(|mut path| {
-        if let Some(t) = tail {
-            path.push(t);
+fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &SearchOptions) -> Vec<PathBuf> {
+    if segments.is_empty() || matches.is_empty() { return matches; }
+    let segment = segments.remove(0);
+
+    if segment == "." || segment.is_empty() {
+        return resolve_path_segments(matches, segments, opts);
+    }
+
+    let mut next_matches = Vec::new();
+    for path in matches {
+        if is_ellipsis(segment) {
+            next_matches.extend(handle_ellipsis(segment, path));
+        } else {
+            let sub_opts = SearchOptions {
+                mode: CdMode::Hybrid, exact: opts.exact, list: opts.list,
+                mock_path: Some(path.into_os_string()),
+            };
+            next_matches.extend(search_cdpath(segment, &sub_opts));
         }
-        path
-    }).collect()
+    }
+    resolve_path_segments(next_matches, segments, opts)
 }
-*/
-fn reattach_tail(matches: Vec<PathBuf>, tail: Option<&str>) -> Vec<PathBuf> {
-    matches.into_iter().map(|mut path| {
-        if let Some(t) = tail {
-            let s = path.to_string_lossy();
-            if s.len() == 2 && s.get(1..2) == Some(":") {
-                path.push(std::path::MAIN_SEPARATOR.to_string());
-            }
-            path.push(t);
-        }
-        path
-    }).collect()
-}
-
-
 
 /// The main search loop. It iterates through possible search roots (CWD, CDPATH)
 /// and applies a 3-phase matching strategy to each.
@@ -359,12 +328,21 @@ fn get_disk_casing(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Splits queries using platform-native separators (supports / and \ on Windows).
-fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
-    let trimmed = if anchored { &query[1..] } else { query };
-    let parts: Vec<&str> = trimmed.splitn(2, std::path::is_separator).collect();
-    (parts[0], parts.get(1).copied())
+/// Splits queries using platform-native separators.
+/// Handles both standard paths and root-anchored paths (starting with \ or C:\).
+pub fn split_query(query: &str, is_anchored: bool) -> (&str, Vec<&str>) {
+    let parts: Vec<&str> = query.split(&['/', '\\'][..]).filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() { return ("", Vec::new()); }
+
+    if is_anchored {
+        // For Windows "C:\", the first part "C:" is the head.
+        // For Unix "/", we need to be careful not to lose the "root" intent.
+        (parts[0], parts[1..].to_vec())
+    } else {
+        (parts[0], parts[1..].to_vec())
+    }
 }
+
 
 /*
 fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
@@ -379,41 +357,28 @@ fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
     }
 }
  */
-
 fn is_ellipsis(head: &str) -> bool {
     head.len() > 1 && head.chars().all(|c| c == '.')
 }
 
-/// Computes parent directory hops. testing primarily optional parm: pathbuf
-fn handle_ellipsis(head: &str,
-                   tail: Option<&str>,
-                   opts: &SearchOptions,
-                   base: PathBuf ) -> Option<Vec<PathBuf>> {
-    let mut current = base;
-    // Dot count to jump mapping: '..' is parent, '...' is parent of parent.
-    for _ in 0..(head.len() - 1) { current.pop(); }
+/// Handles the "..." syntax.
+/// If a tail exists (e.g., ".../src"), it pivots the search root to the calculated parent.
+fn handle_ellipsis(segment: &str, base: PathBuf) -> Vec<PathBuf> {
+    let mut current = if base.is_absolute() { base } else {
+        base.canonicalize().unwrap_or_else(|_| env::current_dir().unwrap_or_default().join(base))
+    };
 
-    if let Some(remainder) = tail {
-        // Use split_query here too!
-        // We treat the remainder as a naked query relative to our new 'current' root.
-        let (sub_head, sub_tail) = split_query(remainder, false);
-        // Recursive-style jump: Pop parents, THEN search for the remainder.
-        let sub_opts = SearchOptions {
-            mode: CdMode::Hybrid, exact: opts.exact, list: opts.list,
-            mock_path: Some(current.into_os_string())
-        };
-        let matches = search_cdpath(sub_head, &sub_opts);
-        return Some(reattach_tail(matches, sub_tail));
+    for _ in 0..(segment.len() - 1) {
+        if !current.pop() { break; }
     }
-    Some(vec![current])
+    vec![current]
 }
 
 /// Finds the root of the current drive (e.g., V:\Projects -> V:\) to support root-anchored jumps.
-fn get_drive_root<P: AsRef<Path>>(cwd: P) -> Option<OsString> {
-    cwd.as_ref()
-        .ancestors()
-        .last()
-        .map(|r| r.to_path_buf().into_os_string())
+fn get_drive_root(path: &Path) -> Option<PathBuf> {
+    path.components()
+        .next()
+        .map(|c| PathBuf::from(c.as_os_str()))
 }
 
 /// Gathers all possible search origins. Priority: 1. CWD, 2. CDPATH.
@@ -540,3 +505,4 @@ Portability: Uses OS-native path separators and environment variables.
 "#;
     eprintln!("{}", help_text.trim());
 }
+
