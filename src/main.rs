@@ -14,6 +14,7 @@
 //! 4. **CDPATH Context**: Searching locations defined in the environment.
 
 use std::{env, fmt, process};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use lexopt::{Parser, Arg};
 use std::ffi::OsString;
@@ -185,10 +186,22 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
         if is_ellipsis(segment) {
             next_matches.extend(handle_ellipsis(segment, path));
         } else {
-            // Only lock the path (mock_path) if we aren't at the CWD.
-            // This preserves the CDPATH search for naked queries like "Project_Alpha*".
             let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
-            next_matches.extend(search_cdpath(segment, &opts));
+
+            let found = if is_base_cwd {
+                search_cdpath(segment, opts)
+            } else {
+                // PATH-LOCK: Create a temporary option set that locks the search to 'path'
+                let mut locked_opts = SearchOptions {
+                    mode: opts.mode,
+                    exact: opts.exact,
+                    list: opts.list,
+                    mock_path: Some(path.clone().into_os_string()),
+                };
+                search_cdpath(segment, &locked_opts)
+            };
+
+            next_matches.extend(found);
         }
     }
     resolve_path_segments(next_matches, segments, opts)
@@ -199,6 +212,7 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
 pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let engine = SearchEngine::new(name, opts.exact);
     let mut all_matches = Vec::new();
+    let mut dirs = HashSet::new();
     let roots = get_search_roots(&opts.mock_path);
 
     for (i, root) in roots.into_iter().enumerate() {
@@ -213,9 +227,10 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // because the OS filesystem is naturally case-insensitive.
         if !engine.is_wildcard && !name.is_empty() {
             if let Some(path) = engine.check_direct(&root) {
-                let p = path.canonicalize().unwrap_or(path);
-                if !opts.exact { return vec![p]; }
-                matches.push(p);
+                let mut p = path.clone();
+                let d = p.canonicalize().unwrap_or(p);
+                if !opts.exact { return vec![path]; }
+                if dirs.insert(d) { matches.push(path); }
             }
         }
 
@@ -224,9 +239,9 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // Skips index 0 (the CWD) to prevent NCD from "finding itself" constantly.
         let is_mock_search = opts.mock_path.is_some();
         if (i > 0 || is_mock_search) && opts.mode != CdMode::Origin {
-            if engine.matches_path(&canon_root) {
+            if engine.matches_path(&root) {
                 let p = canon_root.clone();
-                if !matches.contains(&p) { matches.push(p); }
+                if dirs.insert(p) { matches.push(root.clone()); }
             }
         }
 
@@ -234,8 +249,9 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // The standard "Search Inside" phase. Iterates through all children of the root.
         if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
             for p in engine.scan_dir(&root) {
-                let p2 = p.canonicalize().unwrap_or(p);
-                if !matches.contains(&p2) { matches.push(p2); }
+                let p2=p.clone();
+                let d = p2.canonicalize().unwrap_or(p2);
+                if dirs.insert(d) { matches.push(p); }
             }
         }
 
@@ -417,14 +433,13 @@ fn get_search_roots(mock: &Option<std::ffi::OsString>) -> Vec<PathBuf> {
 
     if let Ok(cwd) = env::current_dir() {
         let cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
-        roots.push(cwd2.clone());
-        seen.insert(cwd2);
+        if seen.insert(cwd2) { roots.push(cwd.clone()); }
     }
 
     if let Some(cdpath) = env::var_os("CDPATH") {
         for p in env::split_paths(&cdpath) {
             let p2 = p.clone().canonicalize().unwrap_or_else(|_| p.clone());
-            if seen.insert(p2.clone()) { roots.push(p2); }
+            if seen.insert(p2.clone()) { roots.push(p); }
         }
     }
     roots
