@@ -177,20 +177,22 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
 fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &SearchOptions) -> Vec<PathBuf> {
     segments.retain(|&s| !s.is_empty() && s != ".");
     if segments.is_empty() || matches.is_empty() { return matches; }
+
     let segment = segments.remove(0);
-
-    if segment == "." || segment.is_empty() {
-        return resolve_path_segments(matches, segments, opts);
-    }
-
     let mut next_matches = Vec::new();
+
     for path in matches {
         if is_ellipsis(segment) {
             next_matches.extend(handle_ellipsis(segment, path));
         } else {
+            // Only lock the path (mock_path) if we aren't at the CWD.
+            // This preserves the CDPATH search for naked queries like "Project_Alpha*".
+            let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
             let sub_opts = SearchOptions {
-                mode: CdMode::Hybrid, exact: opts.exact, list: opts.list,
-                mock_path: Some(path.into_os_string()),
+                mode: CdMode::Hybrid,
+                exact: opts.exact,
+                list: opts.list,
+                mock_path: if is_base_cwd { None } else { Some(path.into_os_string()) },
             };
             next_matches.extend(search_cdpath(segment, &sub_opts));
         }
@@ -323,7 +325,6 @@ impl SearchEngine {
             for entry in entries.flatten() {
                 // Ignore files; NCD is strictly for directory navigation.
                 if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
-
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let is_match = if let Some(ref re) = self.re { re.is_match(&name) }
                 else if self.exact { name == self.query }
@@ -354,14 +355,15 @@ pub fn split_query(query: &str, starts_with_sep: bool, is_anchored: bool) -> (&s
     let parts: Vec<&str> = query.split(PATH_SEPARATORS).filter(|s| !s.is_empty()).collect();
     if parts.is_empty() { return ("", Vec::new()); }
 
-    // For \Projects, head is "Projects", tails is empty.
-    // For C:\Projects, head is "C:", tails is ["Projects"].
     if starts_with_sep {
+        // Root relative: e.g., "\Projects" -> parts are ["Projects"]
         ("", parts)
     } else if is_anchored {
+        // Drive anchored: e.g., "C:\Projects" -> head is "C:", tails are ["Projects"]
         (parts[0], parts[1..].to_vec())
     } else {
-        (parts[0], parts[1..].to_vec())
+        // Naked query: e.g., "Project_Alpha*" -> treat all as segments for search_cdpath
+        ("", parts)
     }
 }
 
