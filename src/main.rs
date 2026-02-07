@@ -27,6 +27,8 @@ pub(crate) const DEFAULT_TEST_ROOT: &str = "V:\\tmp\\ncd_tests";
 pub const DOS_SEPARATOR: char = '\\';
 pub const UNIX_SEPARATOR: char = '/';
 
+pub const PATH_SEPARATORS: &[char] = &[DOS_SEPARATOR, UNIX_SEPARATOR];
+
 /// Governs how the engine treats directories found in the `CDPATH`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CdMode {
@@ -145,24 +147,30 @@ fn run() -> Result<(), NcdError> {
 pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let query = raw_query.trim();
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let is_anchored = query.starts_with(std::path::is_separator) || (
+
+    // Improved anchor detection
+    let starts_with_sep = query.starts_with(std::path::is_separator);
+    let is_anchored = starts_with_sep || (
         query.len() >= 3 &&
             query.as_bytes()[1] == b':' &&
             std::path::is_separator(query.chars().nth(2).unwrap_or(' '))
     );
 
-    let (head, tails) = split_query(query, is_anchored);
+    let (head, tails) = split_query(query, starts_with_sep, is_anchored);
+    let sep = PATH_SEPARATORS[0];
 
-    // This is where the anchor is "kept":
-    let start_roots = if is_anchored {
-        vec![get_drive_root(&base).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("\\"))]
+    let start_roots = if starts_with_sep {
+        let root = get_drive_root(&base).unwrap_or_else(|| PathBuf::from(sep.to_string()));
+        vec![PathBuf::from(format!("{}{}", root.display().to_string().trim_end_matches(PATH_SEPARATORS), sep))]
+    } else if is_anchored {
+        vec![PathBuf::from(format!("{}{}", head, sep))]
     } else {
         vec![base]
     };
 
-    let mut all_segments = if head.is_empty() { Vec::new() } else { vec![head] };
+    let mut all_segments = Vec::new();
+    if !is_anchored && !head.is_empty() { all_segments.push(head); }
     all_segments.extend(tails);
-
     resolve_path_segments(start_roots, all_segments, opts)
 }
 
@@ -342,19 +350,20 @@ fn get_disk_casing(path: &Path) -> String {
 
 /// Splits queries using platform-native separators.
 /// Handles both standard paths and root-anchored paths (starting with \ or C:\).
-pub fn split_query(query: &str, is_anchored: bool) -> (&str, Vec<&str>) {
-    let parts: Vec<&str> = query.split(&['/', '\\'][..]).filter(|s| !s.is_empty()).collect();
+pub fn split_query(query: &str, starts_with_sep: bool, is_anchored: bool) -> (&str, Vec<&str>) {
+    let parts: Vec<&str> = query.split(PATH_SEPARATORS).filter(|s| !s.is_empty()).collect();
     if parts.is_empty() { return ("", Vec::new()); }
 
-    if is_anchored {
-        // For Windows "C:\", the first part "C:" is the head.
-        // For Unix "/", we need to be careful not to lose the "root" intent.
+    // For \Projects, head is "Projects", tails is empty.
+    // For C:\Projects, head is "C:", tails is ["Projects"].
+    if starts_with_sep {
+        ("", parts)
+    } else if is_anchored {
         (parts[0], parts[1..].to_vec())
     } else {
         (parts[0], parts[1..].to_vec())
     }
 }
-
 
 /*
 fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {

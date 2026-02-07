@@ -138,6 +138,22 @@ mod tests {
     }
 
     #[test]
+    fn test_root_anchored_logic_mk2() {
+        let opts = get_opts(CdMode::Origin, false, None);
+        // Use a raw string to avoid escaping backslashes
+        let result = evaluate_jump(r"\Projects", &opts);
+
+        assert!(!result.is_empty(), "Search failed to return results for root anchor");
+
+        let path_str = result[0].to_string_lossy().to_string();
+        // Normalize Windows UNC for comparison
+        let normalized = path_str.replace(r"\\?\", "");
+
+        assert!(normalized.contains("Projects"), "Path missing 'Projects': {}", normalized);
+        assert!(normalized.contains(":\\"), "Path should contain drive separator: {}", normalized);
+    }
+
+    #[test]
     fn test_wildcard_regex_logic() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join("testing.1")).unwrap();
