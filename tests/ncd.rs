@@ -282,7 +282,10 @@ fn test_target_vs_origin_mk2() {
         .arg("ncd")
         .assert()
         .success();
+}
 
+#[test]
+    fn test_target_vs_origin_mk3() {
     // 2. Origin mode: Should fail because "ncd" isn't INSIDE "V:\Projects\ncd".
     let mut cmd_origin = cargo_bin_cmd!("ncd");
     cmd_origin.env("CDPATH", "V:\\Projects\\ncd")

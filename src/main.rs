@@ -188,13 +188,7 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
             // Only lock the path (mock_path) if we aren't at the CWD.
             // This preserves the CDPATH search for naked queries like "Project_Alpha*".
             let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
-            let sub_opts = SearchOptions {
-                mode: CdMode::Hybrid,
-                exact: opts.exact,
-                list: opts.list,
-                mock_path: if is_base_cwd { None } else { Some(path.into_os_string()) },
-            };
-            next_matches.extend(search_cdpath(segment, &sub_opts));
+            next_matches.extend(search_cdpath(segment, &opts));
         }
     }
     resolve_path_segments(next_matches, segments, opts)
@@ -210,6 +204,8 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     for (i, root) in roots.into_iter().enumerate() {
         if !root.is_dir() { continue; }
         let mut matches = Vec::new();
+        let p = root.clone();
+        let canon_root = p.canonicalize().unwrap_or(p);
 
         // PHASE A: DIRECT CHILD HIT
         // Checks if 'root/name' exists as a literal directory.
@@ -217,8 +213,9 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // because the OS filesystem is naturally case-insensitive.
         if !engine.is_wildcard && !name.is_empty() {
             if let Some(path) = engine.check_direct(&root) {
-                if !opts.exact { return vec![path]; }
-                matches.push(path);
+                let p = path.canonicalize().unwrap_or(path);
+                if !opts.exact { return vec![p]; }
+                matches.push(p);
             }
         }
 
@@ -227,19 +224,21 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // Skips index 0 (the CWD) to prevent NCD from "finding itself" constantly.
         let is_mock_search = opts.mock_path.is_some();
         if (i > 0 || is_mock_search) && opts.mode != CdMode::Origin {
-            if engine.matches_path(&root) {
-                matches.push(root.clone());
+            if engine.matches_path(&canon_root) {
+                let p = canon_root.clone();
+                if !matches.contains(&p) { matches.push(p); }
             }
         }
 
         // PHASE C: ORIGIN (Scoping Scan)
         // The standard "Search Inside" phase. Iterates through all children of the root.
         if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
-            matches.extend(engine.scan_dir(&root));
+            for p in engine.scan_dir(&root) {
+                let p2 = p.canonicalize().unwrap_or(p);
+                if !matches.contains(&p2) { matches.push(p2); }
+            }
         }
 
-        matches.sort();
-        matches.dedup();
         // AMBIGUITY RESOLUTION
         // In 'List' mode, we collect everything. In 'Jump' mode, we require a unique match.
         if !matches.is_empty() {
@@ -413,16 +412,20 @@ fn get_search_roots(mock: &Option<std::ffi::OsString>) -> Vec<PathBuf> {
         // We refuse to "pollute" the search with the CWD or CDPATH.
         return vec![PathBuf::from(m)];
     }
-
-    // NAKED QUERY: Fallback to standard heuristics.
+    let mut seen = std::collections::HashSet::new();
     let mut roots = Vec::new();
-    if let Ok(cwd) = env::current_dir() { roots.push(cwd); }
+
+    if let Ok(cwd) = env::current_dir() {
+        let cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+        roots.push(cwd2.clone());
+        seen.insert(cwd2);
+    }
 
     if let Some(cdpath) = env::var_os("CDPATH") {
-        roots.extend(env::split_paths(&cdpath));
-    } else {
-        // Fallback for environments where CDPATH isn't initialized
-        roots.push(PathBuf::from("V:\\Projects"));
+        for p in env::split_paths(&cdpath) {
+            let p2 = p.clone().canonicalize().unwrap_or_else(|_| p.clone());
+            if seen.insert(p2.clone()) { roots.push(p2); }
+        }
     }
     roots
 }
