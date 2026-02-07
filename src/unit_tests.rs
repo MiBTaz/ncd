@@ -340,6 +340,9 @@ mod tests {
         let tail = vec!["Projects", ];
         let results = resolve_path_segments(vec![path], tail, &test_opts());
 
+        assert!(!results.is_empty(), "Search failed to return any results for V: + Projects");
+        let output = results[0].to_string_lossy();
+
         let output = results[0].to_string_lossy();
         // Use the native check instead of hardcoded strings
         let has_sep = output.chars().any(std::path::is_separator);

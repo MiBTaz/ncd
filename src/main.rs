@@ -24,6 +24,9 @@ mod unit_tests;
 #[cfg(test)]
 pub(crate) const DEFAULT_TEST_ROOT: &str = "V:\\tmp\\ncd_tests";
 
+pub const DOS_SEPARATOR: char = '\\';
+pub const UNIX_SEPARATOR: char = '/';
+
 /// Governs how the engine treats directories found in the `CDPATH`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CdMode {
@@ -91,9 +94,14 @@ fn run() -> Result<(), NcdError> {
 
     // Default to Home (~) if no query is provided.
     let s = query.unwrap_or_else(|| "~".to_string());
-    let q = s.trim();
+    let q = s.trim().trim_end_matches(|c| c == DOS_SEPARATOR || c == UNIX_SEPARATOR);
+
 
     match q {
+        "" if !s.trim().is_empty() => {
+            println!("{}", DOS_SEPARATOR);
+            return Ok(())
+        }
         "." => {
             let p = env::current_dir().map_err(|e| NcdError::ResolutionFailed(e.to_string()))?;
             println!("{}", p.display()); return Ok(());
@@ -134,7 +142,8 @@ fn run() -> Result<(), NcdError> {
 
 /// The central brain of NCD. It deconstructs the user query and routes it
 /// through specialized logic handlers (Ellipsis, Anchors, or CDPATH Search).
-pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
+pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
+    let query = raw_query.trim();
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let is_anchored = query.starts_with(std::path::is_separator) || (
         query.len() >= 3 &&
@@ -158,6 +167,7 @@ pub fn evaluate_jump(query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
 }
 
 fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &SearchOptions) -> Vec<PathBuf> {
+    segments.retain(|&s| !s.is_empty() && s != ".");
     if segments.is_empty() || matches.is_empty() { return matches; }
     let segment = segments.remove(0);
 
@@ -218,6 +228,8 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
             matches.extend(engine.scan_dir(&root));
         }
 
+        matches.sort();
+        matches.dedup();
         // AMBIGUITY RESOLUTION
         // In 'List' mode, we collect everything. In 'Jump' mode, we require a unique match.
         if !matches.is_empty() {

@@ -291,3 +291,13 @@ fn test_target_vs_origin_mk2() {
         .assert()
         .failure();
 }
+
+#[test]
+fn test_primitive_dot_resolution_integration() {
+    let mut cmd = Command::new(cargo_bin!("ncd"));
+    let output_raw = cmd.arg(" . ").assert().success().get_output().stdout.clone();
+    let output = String::from_utf8(output_raw).unwrap();
+
+    let current = std::env::current_dir().unwrap().to_string_lossy().replace(r"\\?\", "");
+    assert_eq!(output.trim().trim_end_matches('\\'), current.trim_end_matches('\\'));
+}
