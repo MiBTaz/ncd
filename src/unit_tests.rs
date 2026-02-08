@@ -14,6 +14,7 @@ mod tests {
         SearchOptions {
             mode,
             exact,
+            dir_match: DirMatch::default(),
             list: false, // Default to false for unit tests
             mock_path: mock,
         }
@@ -36,8 +37,8 @@ mod tests {
         temp
     }
 
-    fn test_opts() -> SearchOptions {
-        SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None }
+    pub fn test_opts() -> SearchOptions {
+        SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None, dir_match: DirMatch::default(), }
     }
 
     #[test]
@@ -233,7 +234,7 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::create_dir_all(&cwd_mock).unwrap();
 
-        let opts = SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None };
+        let opts = test_opts();
 
         // Path: go up from CWD, then look for "SiblingTarget"
         let segments = vec!["..", "SiblingTarget"];
@@ -284,7 +285,7 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::create_dir_all(&cwd_mock).unwrap();
 
-        let opts = SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None };
+        let opts = test_opts();
 
         // Logic: Jump 2 levels up ("..."), then look for "SiblingTarget"
         let segments = vec!["...", "SiblingTarget"];
@@ -328,6 +329,7 @@ mod tests {
             mode: CdMode::Hybrid, // <--- Change this from Target to Hybrid or Origin
             exact: false,
             list: false,
+            dir_match: Default::default(),
             mock_path: Some(DEFAULT_TEST_ROOT.into()),
         };
 
@@ -373,7 +375,7 @@ mod tests {
 mod battery_2 {
     use std::env;
     use std::ffi::OsString;
-    use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode, SearchOptions};
+    use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode, DirMatch, SearchOptions};
     use std::path::PathBuf;
 
     fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
@@ -392,6 +394,7 @@ mod battery_2 {
         SearchOptions {
             mode,
             exact,
+            dir_match: Default::default(),
             list: false, // Default to false for unit tests
             mock_path: mock,
         }
@@ -405,7 +408,7 @@ mod battery_2 {
             ("Windows/Sys*", "Windows\\System32"), ("Proj*/ncd/src", "Projects\\ncd\\src")
         ];
         for (query, expected) in cases {
-            let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: Some(root.clone().into_os_string()) };
+            let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into_os_string()) };
             let res = evaluate_jump(query, &opts);
             assert!(res.iter().any(|p| p.to_string_lossy().contains(expected)), "Failed: {} -> {}", query, expected);
         }
@@ -415,7 +418,7 @@ mod battery_2 {
     fn test_path_resolutions() {
         let (_tmp, root) = setup_test_env();
         let root_str = root.to_str().unwrap();
-        let opts = |m: Option<String>| SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: m.map(|s| s.into()) };
+        let opts = |m: Option<String>| SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: m.map(|s| s.into()) };
 
         // --- 1-3: AUTHORITY ---
         let res1 = evaluate_jump("Pr*", &opts(Some(root_str.into())));
@@ -447,7 +450,7 @@ mod battery_2 {
 
     #[test]
     fn test_walker_integration() {
-        let opts = SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None };
+        let opts = crate::unit_tests::tests::test_opts();
         let path = PathBuf::from("C:\\");
         let tail = vec!["Users", "Admin"];
 
@@ -474,7 +477,7 @@ mod battery_2 {
         let (_tmp, root) = setup_test_env();
         let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
         // Case: "Projects/ncd/../Drivers" -> "Drivers"
-        let res = evaluate_jump("Projects/ncd/../Drivers", &opts);
+        let res = evaluate_jump("Projects/ncd/..././Drivers", &opts);
         assert!(!res.is_empty());
         assert!(res[0].ends_with("Drivers"));
     }
@@ -509,7 +512,7 @@ mod battery_2 {
     #[test]
     fn test_complex_edge_cases() {
         let (_tmp, root) = setup_test_env();
-        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: Some(root.clone().into()) };
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match:DirMatch::default(), mock_path: Some(root.clone().into()) };
 
         // 1. Interspersed dots: "Projects/./ncd" -> should resolve as "Projects/ncd"
         let res1 = evaluate_jump("Projects/./ncd", &opts);
@@ -556,7 +559,27 @@ mod battery_2 {
         let (_tmp, root) = setup_test_env();
         let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
         // Verifies: Projects/ncd/../Drivers -> root/Drivers
-        let res = evaluate_jump("Projects/ncd/../Drivers", &opts);
+        let res = evaluate_jump("Projects/ncd/.././../Projects/ncd/.../Drivers", &opts);
+        assert!(!res.is_empty(), "Failed to resolve '..' segment inside fuzzy path");
+        assert!(res[0].ends_with("Drivers"), "Path mismatch. Got: {:?}", res[0]);
+    }
+
+    #[test]
+    fn test_edge_interspersed_parents_mk4() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Verifies: Projects/ncd/../Drivers -> root/Drivers
+        let res = evaluate_jump("Projects/ncd/.././../Projects/ncd/.../Driv", &opts);
+        assert!(!res.is_empty(), "Failed to resolve '..' segment inside fuzzy path");
+        assert!(res[0].ends_with("Drivers"), "Path mismatch. Got: {:?}", res[0]);
+    }
+
+    #[test]
+    fn test_edge_interspersed_parents_mk5() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Verifies: Projects/ncd/../Drivers -> root/Drivers
+        let res = evaluate_jump("Projects/ncd/.././../Proj/ncd/.../Drivers", &opts);
         assert!(!res.is_empty(), "Failed to resolve '..' segment inside fuzzy path");
         assert!(res[0].ends_with("Drivers"), "Path mismatch. Got: {:?}", res[0]);
     }
@@ -585,7 +608,7 @@ mod battery_2 {
     fn test_edge_interspersed_parents_mk3() {
         let (_tmp, root) = setup_test_env();
         let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
-        let res = evaluate_jump("Projects/ncd/../Drivers", &opts);
+        let res = evaluate_jump("Projects/ncd/.../Drivers", &opts);
         assert!(!res.is_empty(), "Failed to resolve '..' in fuzzy path");
         assert!(res[0].to_string_lossy().contains("Drivers"));
     }
@@ -612,9 +635,9 @@ mod battery_2 {
     #[test]
     fn test_edge_interspersed_parents() {
         let (_tmp, root) = setup_test_env();
-        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: Some(root.clone().into()) };
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match:DirMatch::default(),  mock_path: Some(root.clone().into()) };
         // Case: Projects/ncd/../Drivers -> should resolve to root/Drivers
-        let res = evaluate_jump("Projects/ncd/../Drivers", &opts);
+        let res = evaluate_jump("Projects/ncd/../../Drivers", &opts);
         assert!(!res.is_empty(), "Failed interspersed parent jump");
         assert!(res[0].ends_with("Drivers"));
     }
@@ -622,7 +645,7 @@ mod battery_2 {
     #[test]
     fn test_edge_mixed_wildcards() {
         let (_tmp, root) = setup_test_env();
-        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: Some(root.clone().into()) };
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
         // Case: Pr*j?cts -> Projects
         let res = evaluate_jump("Pr*j?cts", &opts);
         assert!(!res.is_empty(), "Failed mixed * and ? wildcards");
@@ -632,7 +655,7 @@ mod battery_2 {
     #[test]
     fn test_edge_dot_navigation() {
         let (_tmp, root) = setup_test_env();
-        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, mock_path: Some(root.clone().into()) };
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
         // Case: Projects/./ncd -> Projects/ncd
         let res = evaluate_jump("Projects/./ncd", &opts);
         assert!(!res.is_empty(), "Failed interspersed dot navigation");

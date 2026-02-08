@@ -40,6 +40,16 @@ pub enum CdMode {
     /// Matches the entry name first, then its contents (Hybrid style).
     Hybrid
 }
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DirMatch {
+    AsIs,
+    Fuzzy,
+}
+impl Default for DirMatch {
+    fn default() -> Self {
+        Self::AsIs
+    }
+}
 
 /// Consolidated state to prevent "Parameter Bloat" in the search pipeline.
 /// Using a struct ensures that adding future features (like Frecency)
@@ -48,6 +58,7 @@ pub struct SearchOptions {
     pub mode: CdMode,
     pub exact: bool,
     pub list: bool,
+    pub dir_match: DirMatch,
     pub mock_path: Option<std::ffi::OsString>,
 }
 
@@ -74,6 +85,7 @@ fn run() -> Result<(), NcdError> {
         },
         exact: false,
         list: false,
+        dir_match: DirMatch::AsIs,
         mock_path: None,
     };
 
@@ -196,6 +208,7 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
                     mode: opts.mode,
                     exact: opts.exact,
                     list: opts.list,
+                    dir_match: opts.dir_match,
                     mock_path: Some(path.clone().into_os_string()),
                 };
                 search_cdpath(segment, &locked_opts)
