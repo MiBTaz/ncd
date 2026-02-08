@@ -585,6 +585,105 @@ mod battery_2 {
     }
 
     #[test]
+    fn test_complex_edge_case_1() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 1. Interspersed dots: "Projects/./ncd" -> should resolve as "Projects/ncd"
+        let res1 = evaluate_jump("Projects/./ncd", &opts);
+        assert!(!res1.is_empty(), "Failed interspersed dot");
+    }
+    #[test]
+    fn test_complex_edge_case_2() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 2. Interspersed parent: "Projects/ncd/../Drivers" -> "Drivers"
+        let res2 = evaluate_jump("Projects/ncd/../../Drivers", &opts);
+        assert!(res2[0].ends_with("Drivers"), "Failed interspersed parent");
+    }
+    #[test]
+    fn test_complex_edge_case_3() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 3. Single character wildcard (?): "Pr?jects" -> "Projects"
+        let res3 = evaluate_jump("Pr?jects", &opts);
+        assert!(!res3.is_empty(), "Failed single-char wildcard '?'");
+    }
+    #[test]
+    fn test_complex_edge_case_4() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 4. Mixed wildcards: "P*j?cts" -> "Projects"
+        let res4 = evaluate_jump("P*j?cts", &opts);
+        assert!(!res4.is_empty(), "Failed mixed wildcards");
+    }
+    #[test]
+    fn test_complex_edge_case_5() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 5. Multiple ??: "syst??32" -> "System32"
+        let res5 = evaluate_jump("Windows/syst??32", &opts);
+        assert!(!res5.is_empty(), "Failed double '??'");
+    }
+    #[test]
+    fn test_complex_edge_case_6() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 6. Trailing slashes: "Projects/ncd/" -> Should not error
+        let res6 = evaluate_jump("Projects/ncd/", &opts);
+        assert!(!res6.is_empty(), "Failed trailing slash");
+    }
+    #[test]
+    fn test_complex_edge_case_7() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 7. Double slashes: "Projects//ncd" -> Should treat as single
+        let res7 = evaluate_jump("Projects//ncd", &opts);
+        assert!(!res7.is_empty(), "Failed double slash");
+    }
+    #[test]
+    fn test_complex_edge_case_8() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 8. The "Nop" jump: " . / . / . " -> current directory
+        let res8 = evaluate_jump(" . / . / . ", &opts);
+        assert_eq!(res8[0].canonicalize().unwrap(), env::current_dir().unwrap().canonicalize().unwrap());
+    }
+    #[test]
+    fn test_complex_edge_case_9a() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 9. Deep wildcards: "*/Guest/*top" -> "Users/Guest/Desktop"
+        let res9 = evaluate_jump("*/Guest/*top", &opts);
+        assert!(!res9.is_empty(), "Failed deep wildcard walk");
+    }
+    #[test]
+    fn test_complex_edge_case_9b() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Origin, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 9. Deep wildcards: "*/Guest/*top" -> "Users/Guest/Desktop"
+        let res9 = evaluate_jump("*/Guest/*top", &opts);
+        assert!(!res9.is_empty(), "Failed deep wildcard walk");
+    }
+    #[test]
+    fn test_complex_edge_case_9c() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Target, exact: false, list: false, dir_match: DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 9. Deep wildcards: "*/Guest/*top" -> "Users/Guest/Desktop"
+        let res9 = evaluate_jump("*/Guest/*top", &opts);
+        assert!(!res9.is_empty(), "Failed deep wildcard walk");
+    }
+
+
+    #[test]
+    fn test_complex_edge_case_10() {
+        let (_tmp, root) = setup_test_env();
+        let opts = SearchOptions { mode: CdMode::Hybrid, exact: false, list: false, dir_match:DirMatch::default(), mock_path: Some(root.clone().into()) };
+        // 10. Empty Query: "" -> should probably return current or empty
+        let res10 = evaluate_jump("", &opts);
+        assert!(res10.is_empty());
+    }
+
+    #[test]
     fn test_edge_interspersed_parents_mk2() {
         let (_tmp, root) = setup_test_env();
         let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));

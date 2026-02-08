@@ -135,6 +135,9 @@ fn run() -> Result<(), NcdError> {
 
     // Execute the Search Pipeline
     let results = evaluate_jump(&q, &opts);
+    if results.len() > 1 {
+        report_ambiguity(Path::new(&q), results);
+    }
 
     // ERROR RESOLUTION & INTEGRATION TEST COMPLIANCE:
     // If results are empty, we must emit a specific error string to stderr
@@ -237,6 +240,8 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
     resolve_path_segments(next_matches, segments, opts)
 }
 
+
+
 /// The main search loop. It iterates through possible search roots (CWD, CDPATH)
 /// and applies a 3-phase matching strategy to each.
 pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
@@ -249,6 +254,7 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         if !root.is_dir() { continue; }
         let mut matches = Vec::new();
         let canon_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let is_mock_search = opts.mock_path.is_some();
 
         // PHASE A: DIRECT CHILD HIT (Absolute/Relative paths)
         if !engine.is_wildcard && !name.is_empty() {
@@ -260,11 +266,14 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         }
 
         // PHASE B: TARGET (The folder itself is the bookmark)
-        let is_mock_search = opts.mock_path.is_some();
         if (i > 0 || is_mock_search) && opts.mode != CdMode::Origin {
             if engine.matches_path(&root) {
                 if dirs.insert(canon_root.clone()) { matches.push(root.clone()); }
             }
+        }
+
+        if name.starts_with("*")  {
+
         }
 
         // PHASE C: ORIGIN (Search inside the folder)
@@ -277,7 +286,7 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         }
 
         if !matches.is_empty() {
-            if opts.list { all_matches.extend(matches); }
+            if opts.list || engine.is_wildcard { all_matches.extend(matches); }
             else if matches.len() == 1 { return matches; }
             else { report_ambiguity(&root, matches); }
         }
@@ -359,10 +368,13 @@ impl SearchEngine {
             for entry in entries.flatten() {
                 // Ignore files; NCD is strictly for directory navigation.
                 if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+                // skip CWD for wildcard
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let is_match = if let Some(ref re) = self.re { re.is_match(&name) }
-                else if self.exact { name == self.query }
-                else {
+                let is_match = if let Some(ref re) = self.re {
+                    re.is_match(&name)
+                } else if self.exact {
+                    name == self.query
+                } else {
                     // Supports both 'exact match' and 'starts with' for fast typing.
                     let nl = name.to_lowercase();
                     if (opts.dir_match == DirMatch::Fuzzy) {
@@ -405,19 +417,6 @@ pub fn split_query(query: &str, starts_with_sep: bool, is_anchored: bool) -> (&s
     }
 }
 
-/*
-fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
-    if anchored {
-        match query.rfind(std::path::is_separator) {
-            Some(pos) => (&query[..pos], Some(&query[pos + 1..])),
-            None => (query, None),
-        }
-    } else {
-        let parts: Vec<&str> = query.splitn(2, std::path::is_separator).collect();
-        (parts[0], parts.get(1).copied())
-    }
-}
- */
 fn is_ellipsis(head: &str) -> bool {
     let dir = trim_to_elipses(head);
     dir.len() > 1 && dir.chars().all(|c| c == '.')
