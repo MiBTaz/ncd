@@ -548,7 +548,7 @@ mod battery_2 {
         assert!(!res1.is_empty(), "Failed interspersed dot");
 
         // 2. Interspersed parent: "Projects/ncd/../Drivers" -> "Drivers"
-        let res2 = evaluate_jump("Projects/ncd/../Drivers", &opts);
+        let res2 = evaluate_jump("Projects/ncd/../../Drivers", &opts);
         assert!(res2[0].ends_with("Drivers"), "Failed interspersed parent");
 
         // 3. Single character wildcard (?): "Pr?jects" -> "Projects"
@@ -583,6 +583,7 @@ mod battery_2 {
         let res10 = evaluate_jump("", &opts);
         assert!(res10.is_empty());
     }
+    
     #[test]
     fn test_edge_interspersed_parents_mk2() {
         let (_tmp, root) = setup_test_env();

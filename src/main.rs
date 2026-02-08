@@ -109,10 +109,10 @@ fn run() -> Result<(), NcdError> {
 
     // Default to Home (~) if no query is provided.
     let s = query.unwrap_or_else(|| "~".to_string());
-    let q = s.trim().trim_end_matches(|c| c == DOS_SEPARATOR || c == UNIX_SEPARATOR);
+    let t = s.trim().trim_end_matches(|c| c == DOS_SEPARATOR || c == UNIX_SEPARATOR);
+    let q  = trim_to_elipses(t).to_string();
 
-
-    match q {
+    match q.as_str() {
         "" if !s.trim().is_empty() => {
             println!("{}", DOS_SEPARATOR);
             return Ok(())
@@ -192,18 +192,22 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
 }
 
 fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &SearchOptions) -> Vec<PathBuf> {
-    segments.retain(|&s| !s.is_empty() && s != ".");
+    segments.retain(|&s| !s.trim().is_empty() && s.trim() != ".");
     if segments.is_empty() || matches.is_empty() { return matches; }
 
     let segment = segments.remove(0);
     let mut next_matches = Vec::new();
 
     for path in matches {
-        if is_ellipsis(segment) {
-            next_matches.extend(handle_ellipsis(segment, path));
+        let nav = trim_to_elipses(segment);
+        if is_ellipsis(&nav) {
+            next_matches.extend(handle_ellipsis(&nav, path));
+        } else if nav == ".." {
+            if let Some(parent) = path.parent() {
+                next_matches.push(parent.to_path_buf());
+            }
         } else {
             let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
-
             let found = if is_base_cwd {
                 search_cdpath(segment, opts)
             } else {
@@ -402,7 +406,18 @@ fn split_query(query: &str, anchored: bool) -> (&str, Option<&str>) {
 }
  */
 fn is_ellipsis(head: &str) -> bool {
-    head.len() > 1 && head.chars().all(|c| c == '.')
+    let dir = trim_to_elipses(head);
+    dir.len() > 1 && dir.chars().all(|c| c == '.')
+}
+
+fn trim_to_elipses(path: &str) -> String {
+    let is_nav = path.chars().all(|c| c == '.' || c == ' ');
+    let p = if is_nav {
+        path.chars().filter(|&c| c == '.').collect::<String>()
+    } else {
+        path.to_string()
+    };
+    p
 }
 
 /// Handles the "..." syntax.
@@ -442,7 +457,7 @@ fn get_search_roots(mock: &Option<std::ffi::OsString>) -> Vec<PathBuf> {
     if let Ok(cwd) = env::current_dir() {
         let cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
         // if seen.insert(cwd2) { roots.push(cwd.clone()); }
-        roots.push(cwd.clone()); 
+        roots.push(cwd.clone());
     }
 
     if let Some(cdpath) = env::var_os("CDPATH") {
