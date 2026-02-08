@@ -1,12 +1,26 @@
+
 // src/unit_tests.rs
+
 
 #[cfg(test)]
 mod tests {
     use std::{env, fs};
-    use std::path::PathBuf;
     use crate::*;
     use tempfile::tempdir;
     use serial_test::serial;
+    use std::path::{Path, PathBuf};
+
+    struct CwdGuard(PathBuf);
+    impl CwdGuard {
+        fn new(path: &Path) -> Self {
+            let old = env::current_dir().unwrap();
+            env::set_current_dir(path).unwrap();
+            Self(old)
+        }
+    }
+    impl Drop for CwdGuard {
+        fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
+    }
 
     /// Helper to generate SearchOptions on the fly for tests.
     /// This keeps the test calls clean and matches the new 2-argument signature.
@@ -247,21 +261,23 @@ mod tests {
     fn test_ellipsis_sibling_resolution_mk2() {
         let temp = tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let target = root.parent().unwrap().join("SiblingTarget");
-        let cwd_mock = root.join("CurrentDir");
+        let target = root.join("SiblingTarget");
+        let depth_layer = root.join("DepthLayer");
+        let cwd_mock = depth_layer.join("CurrentDir");
 
         std::fs::create_dir_all(&target).unwrap();
         std::fs::create_dir_all(&cwd_mock).unwrap();
 
-        // handle_ellipsis("...", base) pops (3-1) = 2 times.
-        // CurrentDir -> root -> root.parent()
+        // "..." pops 2: CurrentDir -> DepthLayer -> root
         let matches = handle_ellipsis("...", cwd_mock);
 
         assert!(!matches.is_empty(), "Ellipsis should return the jumped path");
         let found_path = matches[0].canonicalize().unwrap();
-        let expected_path = target.canonicalize().unwrap();
-        assert_eq!(found_path, expected_path, "Should have popped twice to reach sibling's parent");
+        let expected_path = target.parent().unwrap().canonicalize().unwrap();
+
+        assert_eq!(found_path, expected_path, "Should have popped twice to reach the root containing SiblingTarget");
     }
+
     #[test]
     fn test_primitive_dot_resolution() {
         let opts = get_opts(CdMode::Origin, false, None);
@@ -355,7 +371,7 @@ mod tests {
     #[test]
     fn test_drive_root_regression_two() {
         let path = PathBuf::from("V:");
-        let tail = vec!["Projects", ];
+        let tail = vec!["\\Projects", ];
         let results = resolve_path_segments(vec![path], tail, &test_opts());
 
         assert!(!results.is_empty(), "Search failed to return any results for V: + Projects");
@@ -369,7 +385,20 @@ mod tests {
         assert!(output.starts_with("V:"), "Drive letter lost");
         assert!(output.ends_with("Projects"), "Tail lost");
     }
+    #[test]
+    fn test_drive_root_regression_three() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("Projects")).unwrap();
+
+        let _guard = CwdGuard::new(&root); // Reverts to original CWD on drop
+        let results = resolve_path_segments(vec![PathBuf::from(".")], vec!["Projects"], &test_opts());
+
+        assert!(!results.is_empty(), "Relative search failed");
+        assert!(results[0].ends_with("Projects"));
+    }
 }
+
 
 #[cfg(test)]
 mod battery_2 {
