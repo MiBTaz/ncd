@@ -159,6 +159,7 @@ fn run() -> Result<(), NcdError> {
 /// through specialized logic handlers (Ellipsis, Anchors, or CDPATH Search).
 pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let query = raw_query.trim();
+    if query.is_empty() { return vec![]; }
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let starts_with_sep = query.starts_with(std::path::is_separator);
@@ -209,10 +210,18 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
         } else {
             let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
             let found = if is_base_cwd {
-                search_cdpath(segment, opts)
+                let  mid_opts = SearchOptions {
+                    mode: opts.mode,
+                    exact: opts.exact,
+                    list: opts.list,
+                    dir_match: opts.dir_match,
+                    mock_path: opts.mock_path.clone(),
+                };
+                search_cdpath(segment, &mid_opts)
+//                search_cdpath(segment, opts)
             } else {
                 // PATH-LOCK: Create a temporary option set that locks the search to 'path'
-                let mut locked_opts = SearchOptions {
+                let locked_opts = SearchOptions {
                     mode: opts.mode,
                     exact: opts.exact,
                     list: opts.list,
@@ -261,7 +270,7 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         // PHASE C: ORIGIN (Search inside the folder)
         //        if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
         if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
-            for p in engine.scan_dir(&root) {
+            for p in engine.scan_dir(&root, opts) {
                 let d = p.canonicalize().unwrap_or_else(|_| p.clone());
                 if dirs.insert(d) { matches.push(p); }
             }
@@ -344,7 +353,7 @@ impl SearchEngine {
     }
 
     /// High-performance directory crawler.
-    fn scan_dir(&self, root: &Path) -> Vec<PathBuf> {
+    fn scan_dir(&self, root: &Path, opts: &SearchOptions) -> Vec<PathBuf> {
         let mut found = Vec::new();
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
@@ -354,9 +363,13 @@ impl SearchEngine {
                 let is_match = if let Some(ref re) = self.re { re.is_match(&name) }
                 else if self.exact { name == self.query }
                 else {
-                    let nl = name.to_lowercase();
                     // Supports both 'exact match' and 'starts with' for fast typing.
-                    nl == self.query_lower || nl.starts_with(&self.query_lower)
+                    let nl = name.to_lowercase();
+                    if (opts.dir_match == DirMatch::Fuzzy) {
+                        nl == self.query_lower || nl.starts_with(&self.query_lower)
+                    } else { // (opts.dir_match == DirMatch::AsIs
+                        nl == self.query_lower
+                    }
                 };
                 if is_match { found.push(entry.path()); }
             }

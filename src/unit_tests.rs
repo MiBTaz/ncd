@@ -583,7 +583,7 @@ mod battery_2 {
         let res10 = evaluate_jump("", &opts);
         assert!(res10.is_empty());
     }
-    
+
     #[test]
     fn test_edge_interspersed_parents_mk2() {
         let (_tmp, root) = setup_test_env();
