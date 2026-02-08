@@ -161,7 +161,6 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let query = raw_query.trim();
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    // Improved anchor detection
     let starts_with_sep = query.starts_with(std::path::is_separator);
     let is_anchored = starts_with_sep || (
         query.len() >= 3 &&
@@ -170,21 +169,26 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     );
 
     let (head, tails) = split_query(query, starts_with_sep, is_anchored);
-    let sep = PATH_SEPARATORS[0];
 
-    let start_roots = if starts_with_sep {
-        let root = get_drive_root(&base).unwrap_or_else(|| PathBuf::from(sep.to_string()));
-        vec![PathBuf::from(format!("{}{}", root.display().to_string().trim_end_matches(PATH_SEPARATORS), sep))]
-    } else if is_anchored {
-        vec![PathBuf::from(format!("{}{}", head, sep))]
+    // If not anchored, the 'head' is our first search term
+    let (start_roots, segments) = if is_anchored || starts_with_sep {
+        let sep = PATH_SEPARATORS[0];
+        let root = if starts_with_sep {
+            let r = get_drive_root(&base).unwrap_or_else(|| PathBuf::from(sep.to_string()));
+            PathBuf::from(format!("{}{}", r.display().to_string().trim_end_matches(PATH_SEPARATORS), sep))
+        } else {
+            PathBuf::from(format!("{}{}", head, sep))
+        };
+        (vec![root], tails)
     } else {
-        vec![base]
+        // Naked query: Start at CWD, and the whole query parts are segments
+        let mut s = Vec::new();
+        if !head.is_empty() { s.push(head); }
+        s.extend(tails);
+        (vec![base], s)
     };
 
-    let mut all_segments = Vec::new();
-    if !is_anchored && !head.is_empty() { all_segments.push(head); }
-    all_segments.extend(tails);
-    resolve_path_segments(start_roots, all_segments, opts)
+    resolve_path_segments(start_roots, segments, opts)
 }
 
 fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &SearchOptions) -> Vec<PathBuf> {
@@ -231,45 +235,34 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     for (i, root) in roots.into_iter().enumerate() {
         if !root.is_dir() { continue; }
         let mut matches = Vec::new();
-        let p = root.clone();
-        let canon_root = p.canonicalize().unwrap_or(p);
+        let canon_root = root.canonicalize().unwrap_or_else(|_| root.clone());
 
-        // PHASE A: DIRECT CHILD HIT
-        // Checks if 'root/name' exists as a literal directory.
-        // On Windows, we must manually verify case-preserving 'Exact' matches
-        // because the OS filesystem is naturally case-insensitive.
+        // PHASE A: DIRECT CHILD HIT (Absolute/Relative paths)
         if !engine.is_wildcard && !name.is_empty() {
             if let Some(path) = engine.check_direct(&root) {
-                let mut p = path.clone();
-                let d = p.canonicalize().unwrap_or(p);
+                let d = path.canonicalize().unwrap_or_else(|_| path.clone());
                 if !opts.exact { return vec![path]; }
                 if dirs.insert(d) { matches.push(path); }
             }
         }
 
-        // PHASE B: TARGET (CDPATH Folder Match)
-        // If query is 'Work' and 'V:\Work' is in CDPATH, this phase identifies it.
-        // Skips index 0 (the CWD) to prevent NCD from "finding itself" constantly.
+        // PHASE B: TARGET (The folder itself is the bookmark)
         let is_mock_search = opts.mock_path.is_some();
         if (i > 0 || is_mock_search) && opts.mode != CdMode::Origin {
             if engine.matches_path(&root) {
-                let p = canon_root.clone();
-                if dirs.insert(p) { matches.push(root.clone()); }
+                if dirs.insert(canon_root.clone()) { matches.push(root.clone()); }
             }
         }
 
-        // PHASE C: ORIGIN (Scoping Scan)
-        // The standard "Search Inside" phase. Iterates through all children of the root.
+        // PHASE C: ORIGIN (Search inside the folder)
+        //        if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
         if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
             for p in engine.scan_dir(&root) {
-                let p2=p.clone();
-                let d = p2.canonicalize().unwrap_or(p2);
+                let d = p.canonicalize().unwrap_or_else(|_| p.clone());
                 if dirs.insert(d) { matches.push(p); }
             }
         }
 
-        // AMBIGUITY RESOLUTION
-        // In 'List' mode, we collect everything. In 'Jump' mode, we require a unique match.
         if !matches.is_empty() {
             if opts.list { all_matches.extend(matches); }
             else if matches.len() == 1 { return matches; }
@@ -444,9 +437,12 @@ fn get_search_roots(mock: &Option<std::ffi::OsString>) -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     let mut roots = Vec::new();
 
+    // cwd is expected to be in the list even is it's dup'd in CDPATH.
+    // so leave it in place
     if let Ok(cwd) = env::current_dir() {
         let cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
-        if seen.insert(cwd2) { roots.push(cwd.clone()); }
+        // if seen.insert(cwd2) { roots.push(cwd.clone()); }
+        roots.push(cwd.clone()); 
     }
 
     if let Some(cdpath) = env::var_os("CDPATH") {
