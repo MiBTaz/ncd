@@ -1,5 +1,67 @@
+use std::{env, fs};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use crate::{CdMode, DirMatch, SearchOptions, DEFAULT_TEST_ROOT};
 
 // src/unit_tests.rs
+struct CwdGuard(PathBuf);
+impl CwdGuard {
+    fn new(path: &Path) -> Self {
+        let old = env::current_dir().unwrap();
+        env::set_current_dir(path).unwrap();
+        Self(old)
+    }
+}
+impl Drop for CwdGuard {
+    fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
+}
+
+/// Helper to generate SearchOptions on the fly for tests.
+/// This keeps the test calls clean and matches the new 2-argument signature.
+fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
+    SearchOptions {
+        mode,
+        exact,
+        dir_match: DirMatch::default(),
+        list: false, // Default to false for unit tests
+        mock_path: mock,
+    }
+}
+
+/// Dynamically resolves a test root based on environment or persistent defaults.
+fn get_test_root() -> PathBuf {
+    if let Ok(env_path) = env::var("NCD_TEST_DIR") {
+        let p = PathBuf::from(env_path);
+        if fs::create_dir_all(&p).is_ok() { return p; }
+    }
+
+    let persistent_root = PathBuf::from(DEFAULT_TEST_ROOT);
+    if fs::create_dir_all(&persistent_root).is_ok() {
+        return persistent_root;
+    }
+
+    let temp = env::temp_dir().join("ncd_tests");
+    fs::create_dir_all(&temp).ok();
+    temp
+}
+
+pub fn test_opts() -> SearchOptions {
+    SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None, dir_match: DirMatch::default(), }
+}
+
+fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    // Simulate: /Projects, /Drivers, /Windows, /Users/Guest/Desktop
+    std::fs::create_dir_all(root.join("Projects/ncd/src")).unwrap();
+    std::fs::create_dir_all(root.join("Drivers")).unwrap();
+    std::fs::create_dir_all(root.join("Windows/System32")).unwrap();
+    std::fs::create_dir_all(root.join("Users/Guest/Desktop")).unwrap();
+    let root_path = root.clone();
+    (tmp, root_path)
+}
+
+
 
 
 #[cfg(test)]
@@ -9,51 +71,7 @@ mod tests {
     use tempfile::tempdir;
     use serial_test::serial;
     use std::path::{Path, PathBuf};
-
-    struct CwdGuard(PathBuf);
-    impl CwdGuard {
-        fn new(path: &Path) -> Self {
-            let old = env::current_dir().unwrap();
-            env::set_current_dir(path).unwrap();
-            Self(old)
-        }
-    }
-    impl Drop for CwdGuard {
-        fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
-    }
-
-    /// Helper to generate SearchOptions on the fly for tests.
-    /// This keeps the test calls clean and matches the new 2-argument signature.
-    fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
-        SearchOptions {
-            mode,
-            exact,
-            dir_match: DirMatch::default(),
-            list: false, // Default to false for unit tests
-            mock_path: mock,
-        }
-    }
-
-    /// Dynamically resolves a test root based on environment or persistent defaults.
-    fn get_test_root() -> PathBuf {
-        if let Ok(env_path) = env::var("NCD_TEST_DIR") {
-            let p = PathBuf::from(env_path);
-            if fs::create_dir_all(&p).is_ok() { return p; }
-        }
-
-        let persistent_root = PathBuf::from(DEFAULT_TEST_ROOT);
-        if fs::create_dir_all(&persistent_root).is_ok() {
-            return persistent_root;
-        }
-
-        let temp = env::temp_dir().join("ncd_tests");
-        fs::create_dir_all(&temp).ok();
-        temp
-    }
-
-    pub fn test_opts() -> SearchOptions {
-        SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None, dir_match: DirMatch::default(), }
-    }
+    use crate::unit_tests::{get_opts, get_test_root, setup_test_env, test_opts, CwdGuard};
 
     #[test]
     fn test_junction_follow() {
@@ -369,22 +387,54 @@ mod tests {
         assert!(output.starts_with("V:\\") || output.starts_with("V:/"));
     }
     #[test]
-    fn test_drive_root_regression_two() {
-        let path = PathBuf::from("V:");
-        let tail = vec!["\\Projects", ];
-        let results = resolve_path_segments(vec![path], tail, &test_opts());
+    fn test_drive_root_regression_two_mocked() {
+        let (tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+        let opts = get_opts(CdMode::Origin, true, Some(root.clone().into_os_string()));
 
-        assert!(!results.is_empty(), "Search failed to return any results for V: + Projects");
+        // The environment already has root/Projects/ncd/src
+        let tail = vec!["Projects"];
+        let results = resolve_path_segments(vec![root.clone()], tail, &opts);
+
+        assert!(!results.is_empty(), "Search failed to find Projects in mock root");
         let output = results[0].to_string_lossy();
 
-        let output = results[0].to_string_lossy();
-        // Use the native check instead of hardcoded strings
-        let has_sep = output.chars().any(std::path::is_separator);
-
-        assert!(has_sep, "Murder detected: Path was joined without separator: {}", output);
-        assert!(output.starts_with("V:"), "Drive letter lost");
-        assert!(output.ends_with("Projects"), "Tail lost");
+        // Verify separator logic is handled by PathBuf, not string hacking
+        let has_sep = results[0].components().count() > 1;
+        assert!(has_sep, "Path was not properly joined with separator: {}", output);
+        assert!(output.contains("Projects"), "Tail lost in resolution");
     }
+
+    #[test]
+    fn test_drive_root_regression_mk3() {
+        let (tmp, v_drive_mock) = setup_test_env(); // Projects/ncd/src exists here
+        let sub_dir = v_drive_mock.join("Projects");
+
+        // Guard the CWD to the sub-directory to test relative-to-drive behavior
+        let _guard = CwdGuard::new(&sub_dir);
+
+        // We pass the "Drive Root" as the mock_path
+        let opts = get_opts(CdMode::Hybrid, true, Some(v_drive_mock.clone().into_os_string()));
+
+        // Input "V:ncd" (no slash) should look in CWD of that drive
+        // Input "V:\Projects" should look at the root
+        let tail = vec!["Projects", "ncd", "src"];
+        let results = resolve_path_segments(vec![sub_dir], tail, &opts);
+
+        assert!(!results.is_empty(), "Failed to resolve from sub-dir of mocked drive");
+        assert!(results[0].ends_with("src"), "Path resolution broken: {:?}", results[0]);
+        assert!(results[0].starts_with(&v_drive_mock), "Escaped the virtual drive!");
+    }
+
+    #[test]
+    fn test_drive_root_regression_mk4() {
+        let (tmp, v_drive_mock) = setup_test_env();
+        let opts = get_opts(CdMode::Origin, true, Some(v_drive_mock.clone().into_os_string()));
+        // Start from the root so the tail "Projects/ncd/src" aligns perfectly
+        let results = resolve_path_segments(vec![v_drive_mock.clone()], vec!["Projects", "ncd", "src"], &opts);
+        assert!(!results.is_empty());
+    }
+
     #[test]
     fn test_drive_root_regression_three() {
         let temp = tempdir().unwrap();
@@ -406,28 +456,7 @@ mod battery_2 {
     use std::ffi::OsString;
     use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode, DirMatch, SearchOptions};
     use std::path::PathBuf;
-
-    fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().to_path_buf();
-        // Simulate: /Projects, /Drivers, /Windows, /Users/Guest/Desktop
-        std::fs::create_dir_all(root.join("Projects/ncd/src")).unwrap();
-        std::fs::create_dir_all(root.join("Drivers")).unwrap();
-        std::fs::create_dir_all(root.join("Windows/System32")).unwrap();
-        std::fs::create_dir_all(root.join("Users/Guest/Desktop")).unwrap();
-        let root_path = root.clone();
-        (tmp, root_path)
-    }
-
-    fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
-        SearchOptions {
-            mode,
-            exact,
-            dir_match: Default::default(),
-            list: false, // Default to false for unit tests
-            mock_path: mock,
-        }
-    }
+    use crate::unit_tests::{get_opts, setup_test_env, CwdGuard};
 
     #[test]
     fn check_edges() {
@@ -479,16 +508,17 @@ mod battery_2 {
 
     #[test]
     fn test_walker_integration() {
-        let opts = crate::unit_tests::tests::test_opts();
-        let path = PathBuf::from("C:\\");
-        let tail = vec!["Users", "Admin"];
+        let (tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+        // Explicitly set the mock_path to our temp root
+        let opts = get_opts(CdMode::Hybrid, true, Some(root.clone().into_os_string()));
 
-        // Replacing reattach_tail with the recursive walker
-        let results = resolve_path_segments(vec![path], tail, &opts);
+        // This now exists because setup_test_env created /Users/Guest/Desktop
+        let tail = vec!["Users", "Guest"];
+        let results = resolve_path_segments(vec![root], tail, &opts);
 
-        assert!(!results.is_empty());
-        let output = results[0].to_string_lossy();
-        assert!(output.contains("Users"), "Walker failed to resolve tail segment");
+        assert!(!results.is_empty(), "Walker failed to resolve path in temp env");
+        assert!(results[0].display().to_string().contains("Guest"));
     }
 
     #[test]

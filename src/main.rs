@@ -25,8 +25,18 @@ mod unit_tests;
 #[cfg(test)]
 pub(crate) const DEFAULT_TEST_ROOT: &str = "V:\\tmp\\ncd_tests";
 
+#[cfg(windows)]
 pub const DOS_SEPARATOR: char = '\\';
+#[cfg(not(windows))]
+pub const DOS_SEPARATOR: char = '/';
+
 pub const UNIX_SEPARATOR: char = '/';
+
+#[cfg(windows)]
+pub const DRIVE_SEPARATOR: char = ':';
+#[cfg(not(windows))]
+pub const DRIVE_SEPARATOR: char = char::MAX;
+
 
 pub const PATH_SEPARATORS: &[char] = &[DOS_SEPARATOR, UNIX_SEPARATOR];
 
@@ -135,7 +145,7 @@ fn run() -> Result<(), NcdError> {
 
     // Execute the Search Pipeline
     let results = evaluate_jump(&q, &opts);
-    if results.len() > 1 {
+    if results.len() > 1 && !opts.list {
         report_ambiguity(Path::new(&q), results);
     }
 
@@ -166,13 +176,12 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let starts_with_sep = query.starts_with(std::path::is_separator);
-    let is_anchored = starts_with_sep || (
-        query.len() >= 3 &&
-            query.as_bytes()[1] == b':' &&
-            std::path::is_separator(query.chars().nth(2).unwrap_or(' '))
-    );
+    let (bare, is_anchored, components) = get_drive_components(query);
+    if (bare) {
+        return vec![PathBuf::from(query)];
+    }
 
-    let (head, tails) = split_query(query, starts_with_sep, is_anchored);
+    let (head, tails) = split_query(components, starts_with_sep, is_anchored);
 
     // If not anchored, the 'head' is our first search term
     let (start_roots, segments) = if is_anchored || starts_with_sep {
@@ -265,18 +274,23 @@ pub fn search_cdpath(name: &str, opts: &SearchOptions) -> Vec<PathBuf> {
             }
         }
 
-        // PHASE B: TARGET (The folder itself is the bookmark)
+        // Phase B: for CWD, wildcard matching, any mode.
+        if engine.is_wildcard && i == 0 {
+            for p in engine.scan_dir(&root, opts) {
+                let d = p.canonicalize().unwrap_or_else(|_| p.clone());
+                if dirs.insert(d) { matches.push(p); }
+            }
+        }
+
+        // PHASE C: TARGET (The folder itself is the bookmark)
         if (i > 0 || is_mock_search) && opts.mode != CdMode::Origin {
             if engine.matches_path(&root) {
                 if dirs.insert(canon_root.clone()) { matches.push(root.clone()); }
             }
         }
 
-        if name.starts_with("*")  {
 
-        }
-
-        // PHASE C: ORIGIN (Search inside the folder)
+        // PHASE D: ORIGIN (Search inside the folder)
         //        if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
         if opts.mode != CdMode::Target && (i == 0 || matches.is_empty()) {
             for p in engine.scan_dir(&root, opts) {
@@ -391,6 +405,29 @@ impl SearchEngine {
 }
 
 // --- UTILITIES & SYSTEM HELPERS ---
+fn get_drive_components(path: &str) -> (bool, bool, Vec<&str>)  {
+    let mut anchored = false;
+    let mut bare = false;
+    let mut parts: Vec<&str> = path.split(PATH_SEPARATORS).collect();
+
+    if parts.is_empty() {
+        return (bare, anchored, Vec::new());
+    }
+
+    if path.starts_with(|c| PATH_SEPARATORS.contains(&c)) { anchored = true; }
+
+    if parts[0].len() == 2 &&
+       parts[0].ends_with(DRIVE_SEPARATOR) &&
+       parts[0].chars().next().map_or(false, |c| c.is_alphabetic()) {
+            anchored = true;
+    }
+
+    if anchored && (parts.len() == 1 || parts[1].is_empty()) {
+        bare = true;
+    }
+
+    (bare, anchored, parts)
+}
 
 /// Returns the actual case-preserved name stored by NTFS.
 fn get_disk_casing(path: &Path) -> String {
@@ -401,8 +438,11 @@ fn get_disk_casing(path: &Path) -> String {
 
 /// Splits queries using platform-native separators.
 /// Handles both standard paths and root-anchored paths (starting with \ or C:\).
-pub fn split_query(query: &str, starts_with_sep: bool, is_anchored: bool) -> (&str, Vec<&str>) {
-    let parts: Vec<&str> = query.split(PATH_SEPARATORS).filter(|s| !s.is_empty()).collect();
+pub fn split_query(query: Vec<&str>, starts_with_sep: bool, is_anchored: bool) -> (&str, Vec<&str>) {
+    let parts: Vec<&str> = query.into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+
     if parts.is_empty() { return ("", Vec::new()); }
 
     if starts_with_sep {
