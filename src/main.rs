@@ -37,7 +37,6 @@ pub const DRIVE_SEPARATOR: char = ':';
 #[cfg(not(windows))]
 pub const DRIVE_SEPARATOR: char = char::MAX;
 
-
 pub const PATH_SEPARATORS: &[char] = &[DOS_SEPARATOR, UNIX_SEPARATOR];
 
 /// Governs how the engine treats directories found in the `CDPATH`.
@@ -105,6 +104,7 @@ fn run() -> Result<(), NcdError> {
             Arg::Short('h') | Arg::Long("help") => { help(); process::exit(0); }
             Arg::Short('l') | Arg::Long("list") => opts.list = true,
             Arg::Short('e') | Arg::Long("exact") => opts.exact = true,
+            Arg::Short('#') | Arg::Long("glob") => opts.dir_match = DirMatch::Fuzzy,
             Arg::Long("cd") => {
                 let val = parser.value().map_err(|e| NcdError::ArgError(e.to_string()))?;
                 opts.mode = match val.to_string_lossy().as_ref() {
@@ -584,6 +584,7 @@ OPTIONS:
     -q, --quiet       Suppress error messages on resolution failure.
     -e, --exact       Disable case-insensitive fallback (Strict matching).
     -l, --list        List all matches instead of jumping (Search Engine mode).
+    -#, --glob        Does wildcard matching without using the globs (* and ?).
     --cd=<MODE>       Set search strategy (default mode: origin).
 
 MODES:

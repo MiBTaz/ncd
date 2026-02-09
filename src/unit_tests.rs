@@ -28,6 +28,16 @@ fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions 
     }
 }
 
+fn get_opts_fuzzy(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
+    SearchOptions {
+        mode,
+        exact,
+        dir_match: DirMatch::Fuzzy,
+        list: false, // Default to false for unit tests
+        mock_path: mock,
+    }
+}
+
 /// Dynamically resolves a test root based on environment or persistent defaults.
 fn get_test_root() -> PathBuf {
     if let Ok(env_path) = env::var("NCD_TEST_DIR") {
@@ -456,7 +466,7 @@ mod battery_2 {
     use std::ffi::OsString;
     use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode, DirMatch, SearchOptions};
     use std::path::PathBuf;
-    use crate::unit_tests::{get_opts, setup_test_env, CwdGuard};
+    use crate::unit_tests::{get_opts, get_opts_fuzzy, setup_test_env, CwdGuard};
 
     #[test]
     fn check_edges() {
@@ -726,7 +736,7 @@ mod battery_2 {
     #[test]
     fn test_edge_interspersed_parents_mk4() {
         let (_tmp, root) = setup_test_env();
-        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        let opts = get_opts_fuzzy(CdMode::Hybrid, false, Some(root.clone().into()));
         // Verifies: Projects/ncd/../Drivers -> root/Drivers
         let res = evaluate_jump("Projects/ncd/.././../Projects/ncd/.../Driv", &opts);
         assert!(!res.is_empty(), "Failed to resolve '..' segment inside fuzzy path");
@@ -736,7 +746,7 @@ mod battery_2 {
     #[test]
     fn test_edge_interspersed_parents_mk5() {
         let (_tmp, root) = setup_test_env();
-        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        let opts = get_opts_fuzzy(CdMode::Hybrid, false, Some(root.clone().into()));
         // Verifies: Projects/ncd/../Drivers -> root/Drivers
         let res = evaluate_jump("Projects/ncd/.././../Proj/ncd/.../Drivers", &opts);
         assert!(!res.is_empty(), "Failed to resolve '..' segment inside fuzzy path");
@@ -777,8 +787,26 @@ mod battery_2 {
         let (_tmp, root) = setup_test_env();
         let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
         // Testing both * and ? together
+        let res = evaluate_jump("Pro*s", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("Projects"));
+        let res = evaluate_jump("Pro*s/", &opts);
+        assert!(!res.is_empty(), "2 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("Projects"));
+        let res = evaluate_jump("Pro*s/nc?", &opts);
+        assert!(!res.is_empty(), "3 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+        let res = evaluate_jump("Pro*s/nc?/", &opts);
+        assert!(!res.is_empty(), "4 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+        let res = evaluate_jump("Pro*s/nc?/..", &opts);
+        assert!(!res.is_empty(), "5 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("Projects"));
+        let res = evaluate_jump("Pro*s/nc?/../", &opts);
+        assert!(!res.is_empty(), "6 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("Projects"));
         let res = evaluate_jump("Pro*s/nc?/../Dri*", &opts);
-        assert!(!res.is_empty(), "Mixed wildcards with parent jump failed");
+        assert!(!res.is_empty(), "7 Mixed wildcards with parent jump failed");
         assert!(res[0].to_string_lossy().contains("Drivers"));
     }
 
