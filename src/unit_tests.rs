@@ -71,9 +71,6 @@ fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
     (tmp, root_path)
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use std::{env, fs};
@@ -459,7 +456,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod battery_2 {
     use std::env;
@@ -805,9 +801,64 @@ mod battery_2 {
         let res = evaluate_jump("Pro*s/nc?/../", &opts);
         assert!(!res.is_empty(), "6 Mixed wildcards with parent jump failed");
         assert!(res[0].to_string_lossy().contains("Projects"));
-        let res = evaluate_jump("Pro*s/nc?/../Dri*", &opts);
+        let res = evaluate_jump("Pro*s/nc?/.../Dri*", &opts);
         assert!(!res.is_empty(), "7 Mixed wildcards with parent jump failed");
         assert!(res[0].to_string_lossy().contains("Drivers"));
+    }
+
+    #[test]
+    fn test_edge_mixed_wildcards_mk3() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Testing both * and ? together
+        let res = evaluate_jump("Projects/././ncd/./../ncd", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+
+    }
+
+    #[test]
+    fn test_edge_mixed_wildcards_mk4() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Testing both * and ? together
+        let res = evaluate_jump("Projec*/././ncd/./../ncd", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+
+    }
+
+    #[test]
+    fn test_edge_mixed_wildcards_mk5() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Testing both * and ? together
+        let res = evaluate_jump("Projec*/././ncd/./../nc?", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+
+    }
+
+    #[test]
+    fn test_edge_mixed_wildcards_mk6() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Testing both * and ? together
+        let res = evaluate_jump("Projec*/././ncd/./../nc*", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+
+    }
+
+    #[test]
+    fn test_edge_mixed_wildcards_mk7() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts(CdMode::Hybrid, false, Some(root.clone().into()));
+        // Testing both * and ? together
+        let res = evaluate_jump("Projec*/././ncd/./../nc*/.../Drivers", &opts);
+        assert!(!res.is_empty(), "1 Mixed wildcards with parent jump failed");
+        assert!(res[0].to_string_lossy().contains("Drivers"));
+
     }
 
     #[test]
