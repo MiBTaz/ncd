@@ -389,7 +389,9 @@ impl SearchEngine {
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
                 // Ignore files; NCD is strictly for directory navigation.
-                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+                // if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+                // don't ignore junctions
+                if !entry.path().is_dir() { continue; }
                 // skip CWD for wildcard
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let is_match = if let Some(ref re) = self.re {
