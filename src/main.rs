@@ -221,18 +221,12 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
             }
         } else {
             let is_base_cwd = env::current_dir().map(|c| c == path).unwrap_or(false);
+
             let found = if is_base_cwd {
-                let  mid_opts = SearchOptions {
-                    mode: opts.mode,
-                    exact: opts.exact,
-                    list: opts.list,
-                    dir_match: opts.dir_match,
-                    mock_path: opts.mock_path.clone(),
-                };
-                search_cdpath(segment, &mid_opts)
-//                search_cdpath(segment, opts)
+                // First segment: check CDPATH/CWD
+                search_cdpath(segment, opts)
             } else {
-                // PATH-LOCK: Create a temporary option set that locks the search to 'path'
+                // Sub-segments: LOCK to the specific folder found
                 let locked_opts = SearchOptions {
                     mode: opts.mode,
                     exact: opts.exact,
@@ -246,10 +240,22 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
             next_matches.extend(found);
         }
     }
-    resolve_path_segments(next_matches, segments, opts)
+
+    if next_matches.is_empty() { return Vec::new(); }
+
+    // THE RECURSION FIX:
+    // Create the new options for the next level.
+    // We use the first match as the anchor for the next segment's search.
+    let next_opts = SearchOptions {
+        mode: opts.mode,
+        exact: opts.exact,
+        list: opts.list,
+        dir_match: opts.dir_match,
+        mock_path: Some(next_matches[0].clone().into_os_string()),
+    };
+
+    resolve_path_segments(next_matches, segments, &next_opts)
 }
-
-
 
 /// The main search loop. It iterates through possible search roots (CWD, CDPATH)
 /// and applies a 3-phase matching strategy to each.
