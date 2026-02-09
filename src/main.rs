@@ -20,6 +20,7 @@ use lexopt::{Parser, Arg};
 use std::ffi::OsString;
 
 #[cfg(test)]
+mod unit_tests_local;
 mod unit_tests;
 
 #[cfg(test)]
