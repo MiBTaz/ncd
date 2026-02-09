@@ -1,82 +1,15 @@
+// src/unit_tests.rs
 use std::{env, fs};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use crate::{CdMode, DirMatch, SearchOptions, DEFAULT_TEST_ROOT};
-
-// src/unit_tests.rs
-struct CwdGuard(PathBuf);
-impl CwdGuard {
-    fn new(path: &Path) -> Self {
-        let old = env::current_dir().unwrap();
-        env::set_current_dir(path).unwrap();
-        Self(old)
-    }
-}
-impl Drop for CwdGuard {
-    fn drop(&mut self) { env::set_current_dir(&self.0).unwrap(); }
-}
-
-/// Helper to generate SearchOptions on the fly for tests.
-/// This keeps the test calls clean and matches the new 2-argument signature.
-fn get_opts(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
-    SearchOptions {
-        mode,
-        exact,
-        dir_match: DirMatch::default(),
-        list: false, // Default to false for unit tests
-        mock_path: mock,
-    }
-}
-
-fn get_opts_fuzzy(mode: CdMode, exact: bool, mock: Option<OsString>) -> SearchOptions {
-    SearchOptions {
-        mode,
-        exact,
-        dir_match: DirMatch::Fuzzy,
-        list: false, // Default to false for unit tests
-        mock_path: mock,
-    }
-}
-
-/// Dynamically resolves a test root based on environment or persistent defaults.
-fn get_test_root() -> PathBuf {
-    if let Ok(env_path) = env::var("NCD_TEST_DIR") {
-        let p = PathBuf::from(env_path);
-        if fs::create_dir_all(&p).is_ok() { return p; }
-    }
-
-    let persistent_root = PathBuf::from(DEFAULT_TEST_ROOT);
-    if fs::create_dir_all(&persistent_root).is_ok() {
-        return persistent_root;
-    }
-
-    let temp = env::temp_dir().join("ncd_tests");
-    fs::create_dir_all(&temp).ok();
-    temp
-}
-
-pub fn test_opts() -> SearchOptions {
-    SearchOptions { mode: CdMode::Origin, exact: true, list: false, mock_path: None, dir_match: DirMatch::default(), }
-}
-
-fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().to_path_buf();
-    // Simulate: /Projects, /Drivers, /Windows, /Users/Guest/Desktop
-    std::fs::create_dir_all(root.join("Projects/ncd/src")).unwrap();
-    std::fs::create_dir_all(root.join("Drivers")).unwrap();
-    std::fs::create_dir_all(root.join("Windows/System32")).unwrap();
-    std::fs::create_dir_all(root.join("Users/Guest/Desktop")).unwrap();
-    let root_path = root.clone();
-    (tmp, root_path)
-}
 
 #[cfg(test)]
 mod battery_1_mk1 {
     use std::fs;
     use std::path::PathBuf;
     use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode};
-    use crate::unit_tests::{get_opts, setup_test_env, test_opts, CwdGuard};
+    use crate::unit_tests_local::{get_opts, setup_test_env, test_opts, CwdGuard};
 
     #[test]
     fn test_ellipsis_sibling_resolution() {
@@ -157,38 +90,6 @@ mod battery_1_mk1 {
         assert_eq!(found_path, expected_path, "Should have popped twice to reach the root");
     }
     #[test]
-    fn test_ellipsis_overflow_safety() {
-        let (_tmp, root) = setup_test_env();
-        let _guard = CwdGuard::new(&root);
-
-        // handle_ellipsis sees "." as the base.
-        let matches = handle_ellipsis(".......", PathBuf::from("."));
-
-        for m in matches {
-            assert!(
-                !m.is_absolute(),
-                "Escaped sandbox! Found absolute path: {:?}", m
-            );
-            // The fix: We now return "." instead of "" to keep the path valid.
-            assert_eq!(m, PathBuf::from("."), "Should have pinned to dot-root");
-        }
-    }
-    #[test]
-    fn test_ellipsis_traversal_limit() {
-        let (_tmp, root) = setup_test_env();
-        let child = root.join("Projects");
-        fs::create_dir_all(&child).unwrap();
-
-        // Starting 1 level deep, '...' (climb 2) should land exactly on root.
-        let matches = handle_ellipsis("...", child);
-
-        assert!(!matches.is_empty());
-        let found = matches[0].canonicalize().unwrap();
-        let expected = root.canonicalize().unwrap();
-
-        assert_eq!(found, expected, "Should have stopped at sandbox root");
-    }
-    #[test]
     fn test_primitive_dot_resolution() {
         let (_tmp, root) = setup_test_env();
         let _guard = CwdGuard::new(&root);
@@ -234,7 +135,7 @@ mod battery_1_mk1 {
 mod battery_1_mk2 {
     use std::{fs};
     use crate::*;
-    use crate::unit_tests::{get_opts, get_opts_fuzzy, setup_test_env, CwdGuard};
+    use crate::unit_tests_local::{get_opts, get_opts_fuzzy, setup_test_env, CwdGuard};
     #[test]
     fn test_primitive_dot_resolution() {
         let (_tmp, root) = setup_test_env();
@@ -285,19 +186,6 @@ mod battery_1_mk2 {
         let path_str = res[0].to_string_lossy();
         assert!(path_str.contains("testing.1"), "Resolved path '{}' did not match pattern", path_str);
         assert!(res[0].starts_with(&root), "Wildcard search escaped mock root");
-    }
-    #[test]
-    fn test_junction_traversal_integrity() {
-        let (_tmp, root) = setup_test_env();
-        let root2=root.clone();
-        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
-
-        // Verify that the search actually resolves through the directory structure
-        let res = search_cdpath("ncd", &opts);
-
-        assert!(!res.is_empty(), "Search failed to traverse into Projects/ncd");
-        assert!(res[0].to_string_lossy().contains("ncd"));
-        assert!(res[0].starts_with(&root2), "Path escaped the temp sandbox");
     }
     #[test]
     fn test_cdpath_exact_vs_fuzzy() {
@@ -380,25 +268,13 @@ mod battery_1_mk2 {
             assert!(res_exact.is_empty(), "Exact match should fail on case-sensitive OS for 'myproject'");
         }
     }
-    #[test]
-    fn test_fuzzy_match_depth_integrity() {
-        let (_tmp, root) = setup_test_env();
-        let opts = get_opts_fuzzy(CdMode::Origin, false, Some(root.into_os_string()));
-
-        // Searching for a partial match deep in the setup_test_env tree
-        let res = search_cdpath("guest", &opts);
-
-        assert!(!res.is_empty(), "Fuzzy search failed to find 'Guest' folder");
-        assert!(res[0].to_string_lossy().contains("Guest"));
-        assert!(res[0].is_absolute());
-    }
 }
 
 mod battery_1_mk3 {
     use std::fs;
     use std::path::PathBuf;
     use crate::{evaluate_jump, resolve_path_segments, search_cdpath, CdMode};
-    use crate::unit_tests::{get_opts, setup_test_env, test_opts, CwdGuard};
+    use crate::unit_tests_local::{get_opts, setup_test_env, test_opts, CwdGuard};
 
     #[test]
     fn test_walker_jump_persistence() {
@@ -411,41 +287,6 @@ mod battery_1_mk3 {
 
         assert!(!results.is_empty());
         assert_eq!(results[0].canonicalize().unwrap(), start.canonicalize().unwrap());
-    }
-    #[test]
-    fn test_root_protection_logic() {
-        let (_tmp, root) = setup_test_env();
-        let _guard = CwdGuard::new(&root);
-
-        // Use the temp root as our logical 'V:\' anchor
-        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
-
-        // Attempting to go '..' from our mocked root
-        let res = evaluate_jump("..", &opts);
-
-        assert!(!res.is_empty(), "Root protection should still return a valid path (the root itself)");
-
-        // Ensure the logic doesn't escape the mock root sandbox
-        let result_path = &res[0];
-        assert!(
-            result_path == &root || !result_path.starts_with(root.parent().unwrap_or(&root)),
-            "Path escaped the protected mock root: {:?}", result_path
-        );
-    }
-    #[test]
-    fn test_boundary_ellipsis_protection() {
-        let (_tmp, root) = setup_test_env();
-        // Start only one level deep
-        let child = root.join("Projects");
-        let _guard = CwdGuard::new(&child);
-        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
-
-        // '...' attempts to climb 2 levels, but we only have 1 level above us in the sandbox
-        let res = evaluate_jump("...", &opts);
-
-        assert!(!res.is_empty());
-        // The engine should settle on the root rather than panicking or escaping to CI system temp
-        assert_eq!(res[0].canonicalize().unwrap(), root.canonicalize().unwrap());
     }
     #[test]
     fn test_single_level_authority() {
@@ -465,19 +306,6 @@ mod battery_1_mk3 {
 
         // Final check that the authority of the mock_path was respected
         assert!(results[0].starts_with(&root), "Search results escaped the authority of the mock root");
-    }
-    #[test]
-    fn test_authority_depth_limit() {
-        let (_tmp, root) = setup_test_env();
-        let deep = root.join("Level1/Level2/Level3");
-        fs::create_dir_all(&deep).ok();
-
-        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
-        // Searching for 'Level3' from the root authority
-        let results = search_cdpath("Level3", &opts);
-
-        assert!(!results.is_empty(), "Engine failed to traverse depth under authority");
-        assert!(results[0].ends_with("Level3"));
     }
     #[test]
     fn test_drive_root_regression() {
@@ -555,22 +383,6 @@ mod battery_1_mk3 {
         assert_eq!(results[0], expected, "Resolved path does not match OS-specific expected path");
     }
     #[test]
-    fn test_drive_root_regression_three() {
-        let (_tmp, root) = setup_test_env();
-        let root = root.canonicalize().unwrap();
-        std::fs::create_dir_all(root.join("Projects")).unwrap();
-
-        // Reverts to original CWD on drop, ensuring CI process stability
-        let _guard = CwdGuard::new(&root);
-
-        // Test relative resolution starting from the current directory "."
-        let results = resolve_path_segments(vec![PathBuf::from(".")], vec!["Projects"], &test_opts());
-
-        assert!(!results.is_empty(), "Relative search failed to resolve 'Projects' from '.'");
-        assert!(results[0].ends_with("Projects"));
-        assert!(results[0].is_absolute(), "Resolved path should be absolute even when starting from '.'");
-    }
-    #[test]
     fn test_dot_slash_resolution() {
         let (_tmp, root) = setup_test_env();
         let target = root.join("Projects");
@@ -590,7 +402,7 @@ mod battery_1_mk4 {
     use std::{env, fs};
     use serial_test::serial;
     use crate::{evaluate_jump, search_cdpath, CdMode};
-    use crate::unit_tests::{get_opts, get_test_root, setup_test_env, CwdGuard};
+    use crate::unit_tests_local::{get_opts, get_test_root, setup_test_env, CwdGuard};
 
     #[test]
     fn test_junction_follow() {
@@ -608,20 +420,6 @@ mod battery_1_mk4 {
 
         assert!(!res.is_empty(), "Failed to find junction/link in mock root");
         assert!(res[0].ends_with("JunctionFollow"));
-    }
-    #[test]
-    fn test_dot_traversal_boundary() {
-        let (_tmp, root) = setup_test_env();
-        let _guard = CwdGuard::new(&root);
-
-        // Testing '..' from the root of the mock environment
-        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
-        let result = evaluate_jump("..", &opts);
-
-        if !result.is_empty() {
-            // Ensure we never climb above the mocked root if boundary logic is active
-            assert!(result[0].starts_with(&root) || result[0] == root);
-        }
     }
     #[test]
     fn test_extreme_ellipsis() {
@@ -677,24 +475,6 @@ mod battery_1_mk4 {
         assert!(res[0].starts_with(&root));
     }
     #[test]
-    fn test_root_anchored_logic() {
-        let (_tmp, root) = setup_test_env();
-        let _guard = CwdGuard::new(&root);
-
-        // Match the working mk2 test exactly: use the raw string anchor
-        // The mock_path in opts will redirect this from physical V:\ to your temp root
-        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
-        let result = evaluate_jump(r"\Projects", &opts);
-
-        assert!(!result.is_empty(), "Root anchor failed: result was empty for query r'\\Projects'");
-
-        let path_str = result[0].to_string_lossy();
-        assert!(path_str.contains("Projects"), "Path missing 'Projects': {}", path_str);
-
-        // Since we are mocked, we check against the temp root, not a drive letter
-        assert!(result[0].starts_with(&root), "Result stayed outside of mock root: {:?}", result[0]);
-    }
-    #[test]
     fn test_root_anchored_logic_mk2() {
         let (_tmp, root) = setup_test_env();
         // Passing 'root' as mock_path allows the engine to treat the temp dir as the drive root
@@ -747,22 +527,6 @@ mod battery_1_mk4 {
         let path_str = res[0].to_string_lossy();
         assert!(path_str.contains("child_glob"), "Result path '{}' does not contain 'child_glob'", path_str);
     }
-    #[test]
-    fn test_parent_globbing_absolute_integrity() {
-        let (_tmp, root) = setup_test_env();
-        let child = root.join("parent_dir").join("child_glob");
-        fs::create_dir_all(&child).unwrap();
-        let _guard = CwdGuard::new(&child);
-
-        let query = format!("..{}child*", std::path::MAIN_SEPARATOR);
-        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
-        let res = evaluate_jump(&query, &opts);
-
-        assert!(!res.is_empty());
-        // Verify the path is fully resolved and absolute
-        assert!(res[0].is_absolute(), "Glob resolution should return absolute paths");
-        assert_eq!(res[0], child.canonicalize().unwrap_or(child));
-    }
     #[serial]
     #[test]
     fn test_root_anchored_wildcard_mk2() {
@@ -807,7 +571,7 @@ mod battery_2 {
     use std::env;
     use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode, DirMatch, SearchOptions};
     use std::path::PathBuf;
-    use crate::unit_tests::{get_opts, get_opts_fuzzy, setup_test_env, CwdGuard};
+    use crate::unit_tests_local::{get_opts, get_opts_fuzzy, setup_test_env, CwdGuard};
 
     #[test]
     fn check_edges() {
@@ -1245,11 +1009,12 @@ mod battery_2 {
         assert!(res[0].to_string_lossy().contains("ncd"));
     }
 }
+
 mod battery_3_elipses {
     use std::{env, fs};
     use std::path::PathBuf;
     use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, CdMode};
-    use crate::unit_tests::{get_opts, setup_test_env, CwdGuard};
+    use crate::unit_tests_local::{get_opts, setup_test_env, CwdGuard};
 
     #[test]
     fn test_hyphen_jump() {
@@ -1575,18 +1340,182 @@ mod battery_3_elipses {
 
         assert_eq!(result[0], root, "Did not clamp to the mock_path boundary");
     }
-    #[test]
-    fn test_ellipsis_climb_clamping_mk2() {
-        let (_tmp, root) = setup_test_env();
-        let start = root.join("a/b");
-        let opts = SearchOptions {
-            logical_floor: Some(root.clone()),
-            ..default_opts()
-        };
-
-        // "...." is up 3 levels. From a/b, it should hit root (2 levels) and stop.
-        let res = handle_ellipsis("....", start, &opts);
-        assert_eq!(res[0], root, "Ellipsis failed to respect logical_floor boundary");
-    }
 }
 
+mod battery_last {
+    use std::fs;
+    use std::path::PathBuf;
+    use crate::{evaluate_jump, handle_ellipsis, resolve_path_segments, search_cdpath, CdMode};
+    use crate::unit_tests_local::{get_opts, get_opts_fuzzy, setup_test_env, test_opts, CwdGuard};
+
+    #[test]
+    fn test_ellipsis_overflow_safety() {
+        let (_tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+
+        // handle_ellipsis sees "." as the base.
+        let matches = handle_ellipsis(".......", PathBuf::from("."));
+
+        for m in matches {
+            assert!(
+                !m.is_absolute(),
+                "Escaped sandbox! Found absolute path: {:?}", m
+            );
+            // The fix: We now return "." instead of "" to keep the path valid.
+            assert_eq!(m, PathBuf::from("."), "Should have pinned to dot-root");
+        }
+    }
+    #[test]
+    fn test_ellipsis_traversal_limit() {
+        let (_tmp, root) = setup_test_env();
+        let child = root.join("Projects");
+        fs::create_dir_all(&child).unwrap();
+
+        // Starting 1 level deep, '...' (climb 2) should land exactly on root.
+        let matches = handle_ellipsis("...", child);
+
+        assert!(!matches.is_empty());
+        let found = matches[0].canonicalize().unwrap();
+        let expected = root.canonicalize().unwrap();
+
+        assert_eq!(found, expected, "Should have stopped at sandbox root");
+    }
+    #[test]
+    fn test_fuzzy_match_depth_integrity() {
+        let (_tmp, root) = setup_test_env();
+        let opts = get_opts_fuzzy(CdMode::Origin, false, Some(root.into_os_string()));
+
+        // Searching for a partial match deep in the setup_test_env tree
+        let res = search_cdpath("guest", &opts);
+
+        assert!(!res.is_empty(), "Fuzzy search failed to find 'Guest' folder");
+        assert!(res[0].to_string_lossy().contains("Guest"));
+        assert!(res[0].is_absolute());
+    }
+    #[test]
+    fn test_junction_traversal_integrity() {
+        let (_tmp, root) = setup_test_env();
+        let root2=root.clone();
+        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
+
+        // Verify that the search actually resolves through the directory structure
+        let res = search_cdpath("ncd", &opts);
+
+        assert!(!res.is_empty(), "Search failed to traverse into Projects/ncd");
+        assert!(res[0].to_string_lossy().contains("ncd"));
+        assert!(res[0].starts_with(&root2), "Path escaped the temp sandbox");
+    }
+    #[test]
+    fn test_authority_depth_limit() {
+        let (_tmp, root) = setup_test_env();
+        let deep = root.join("Level1/Level2/Level3");
+        fs::create_dir_all(&deep).ok();
+
+        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
+        // Searching for 'Level3' from the root authority
+        let results = search_cdpath("Level3", &opts);
+
+        assert!(!results.is_empty(), "Engine failed to traverse depth under authority");
+        assert!(results[0].ends_with("Level3"));
+    }
+    #[test]
+    fn test_boundary_ellipsis_protection() {
+        let (_tmp, root) = setup_test_env();
+        // Start only one level deep
+        let child = root.join("Projects");
+        let _guard = CwdGuard::new(&child);
+        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
+
+        // '...' attempts to climb 2 levels, but we only have 1 level above us in the sandbox
+        let res = evaluate_jump("...", &opts);
+
+        assert!(!res.is_empty());
+        // The engine should settle on the root rather than panicking or escaping to CI system temp
+        assert_eq!(res[0].canonicalize().unwrap(), root.canonicalize().unwrap());
+    }
+    #[test]
+    fn test_drive_root_regression_three() {
+        let (_tmp, root) = setup_test_env();
+        let root = root.canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("Projects")).unwrap();
+
+        // Reverts to original CWD on drop, ensuring CI process stability
+        let _guard = CwdGuard::new(&root);
+
+        // Test relative resolution starting from the current directory "."
+        let results = resolve_path_segments(vec![PathBuf::from(".")], vec!["Projects"], &test_opts());
+
+        assert!(!results.is_empty(), "Relative search failed to resolve 'Projects' from '.'");
+        assert!(results[0].ends_with("Projects"));
+        assert!(results[0].is_absolute(), "Resolved path should be absolute even when starting from '.'");
+    }
+    #[test]
+    fn test_root_protection_logic() {
+        let (_tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+
+        // Use the temp root as our logical 'V:\' anchor
+        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
+
+        // Attempting to go '..' from our mocked root
+        let res = evaluate_jump("..", &opts);
+
+        assert!(!res.is_empty(), "Root protection should still return a valid path (the root itself)");
+
+        // Ensure the logic doesn't escape the mock root sandbox
+        let result_path = &res[0];
+        assert!(
+            result_path == &root || !result_path.starts_with(root.parent().unwrap_or(&root)),
+            "Path escaped the protected mock root: {:?}", result_path
+        );
+    }
+    #[test]
+    fn test_dot_traversal_boundary() {
+        let (_tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+
+        // Testing '..' from the root of the mock environment
+        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
+        let result = evaluate_jump("..", &opts);
+
+        if !result.is_empty() {
+            // Ensure we never climb above the mocked root if boundary logic is active
+            assert!(result[0].starts_with(&root) || result[0] == root);
+        }
+    }
+    #[test]
+    fn test_parent_globbing_absolute_integrity() {
+        let (_tmp, root) = setup_test_env();
+        let child = root.join("parent_dir").join("child_glob");
+        fs::create_dir_all(&child).unwrap();
+        let _guard = CwdGuard::new(&child);
+
+        let query = format!("..{}child*", std::path::MAIN_SEPARATOR);
+        let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
+        let res = evaluate_jump(&query, &opts);
+
+        assert!(!res.is_empty());
+        // Verify the path is fully resolved and absolute
+        assert!(res[0].is_absolute(), "Glob resolution should return absolute paths");
+        assert_eq!(res[0], child.canonicalize().unwrap_or(child));
+    }
+    #[test]
+    fn test_root_anchored_logic() {
+        let (_tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
+
+        // Match the working mk2 test exactly: use the raw string anchor
+        // The mock_path in opts will redirect this from physical V:\ to your temp root
+        let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
+        let result = evaluate_jump(r"\Projects", &opts);
+
+        assert!(!result.is_empty(), "Root anchor failed: result was empty for query r'\\Projects'");
+
+        let path_str = result[0].to_string_lossy();
+        assert!(path_str.contains("Projects"), "Path missing 'Projects': {}", path_str);
+
+        // Since we are mocked, we check against the temp root, not a drive letter
+        assert!(result[0].starts_with(&root), "Result stayed outside of mock root: {:?}", result[0]);
+    }
+
+}

@@ -21,6 +21,7 @@ use std::ffi::OsString;
 
 #[cfg(test)]
 mod unit_tests_local;
+#[cfg(test)]
 mod unit_tests;
 
 #[cfg(test)]

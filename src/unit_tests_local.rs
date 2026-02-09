@@ -1,10 +1,10 @@
+// src/unit_tests.rs
 use std::{env, fs};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use crate::{CdMode, DirMatch, SearchOptions, DEFAULT_TEST_ROOT};
 
-// src/unit_tests.rs
-struct CwdGuard(PathBuf);
+pub struct CwdGuard(PathBuf);
 impl CwdGuard {
     pub fn new(path: &Path) -> Self {
         let old = env::current_dir().unwrap();
