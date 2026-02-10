@@ -2859,7 +2859,10 @@ pub mod github_fails {
         println!("[TRACE] components: {:?}", p.components().collect::<Vec<_>>());
 
         let res = evaluate_jump(&query, &test_opts());
-        assert!(!res.is_empty(), "Failed. Query: {}, IsAbs: {}, Exists: {}", query, p.is_absolute(), p.exists());
+        assert!(!res.is_empty(),
+                "\nABS_FAIL:\nQuery: {}\nExists: {}\nIsAbs: {}\nComponents: {:?}\nResults: {:?}",
+                query, target.exists(), Path::new(&query).is_absolute(),
+                Path::new(&query).components().collect::<Vec<_>>(), res);
     }
     #[test]
     fn test_root_anchored_logic_mk3() {
@@ -2872,7 +2875,9 @@ pub mod github_fails {
         let query = "Projects";
         let result = evaluate_jump(query, &opts);
 
-        assert!(!result.is_empty(), "Search failed for: {} in {:?}", query, root);
+        assert!(!result.is_empty(),
+                "\nANCHOR_FAIL:\nQuery: {}\nMockRoot: {:?}\nCWD: {:?}\nResult: {:?}",
+                query, opts.mock_path, std::env::current_dir().ok(), result);
         // Ensure it's the right Projects folder
         assert!(result[0].starts_with(&root));
     }
