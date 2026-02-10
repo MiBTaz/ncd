@@ -2839,7 +2839,7 @@ pub mod aggregate_series {
     }
 }
 pub mod github_fails {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use crate::{evaluate_jump, handle_ellipsis, CdMode};
     use crate::unit_tests_local::{create_ncd_sandbox, get_opts, setup_test_env, test_opts, CwdGuard};
 
