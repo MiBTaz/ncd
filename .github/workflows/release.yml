@@ -2,11 +2,13 @@ name: Release
 
 on:
   push:
+    branches:
+      - master
     tags:
-      - 'v*' # Triggers on v1.0, v1.0.1, etc.
-
+      - 'v*'
+      
 permissions:
-  contents: write 
+  contents: write
 
 jobs:
   build:
