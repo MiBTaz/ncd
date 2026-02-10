@@ -24,7 +24,7 @@ jobs:
         run: cargo test --doc
 
       - name: Run Nextest (Unit & Integration)
-        run: cargo nextest run --no-fail-fast
+        run: cargo nextest run --no-fail-fast -- --nocapture
         env:
           RUST_BACKTRACE: 1
 

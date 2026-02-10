@@ -2865,20 +2865,17 @@ pub mod github_fails {
     fn test_root_anchored_logic_mk3() {
         let (_tmp, root) = setup_test_env();
         let _guard = CwdGuard::new(&root);
-        // Ensure the directory actually exists within our mock root
-        std::fs::create_dir(root.join("Projects")).unwrap();
 
+        // No need to create "Projects", setup_test_env already did it.
         let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
 
-        // If query starts with \, engine looks at C:\.
-        // We use a relative query or update the engine to prepend mock_path.
         let query = "Projects";
         let result = evaluate_jump(query, &opts);
 
         assert!(!result.is_empty(), "Search failed for: {} in {:?}", query, root);
-        assert!(result[0].to_string_lossy().contains("Projects"));
+        // Ensure it's the right Projects folder
+        assert!(result[0].starts_with(&root));
     }
-
     #[test]
     fn test_ellipsis_relative_to_dot() {
         let (_guard, _temp, root) = create_ncd_sandbox();
