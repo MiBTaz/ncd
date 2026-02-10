@@ -24,10 +24,14 @@ jobs:
         run: cargo test --doc
 
       - name: Run Nextest (Unit & Integration)
-        run: cargo nextest run
+        run: cargo nextest run --no-fail-fast
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Build Release
         run: cargo build --release
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Upload Binary to Release
         if: startsWith(github.ref, 'refs/tags/')
