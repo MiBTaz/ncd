@@ -8,7 +8,6 @@ mod integrated_tests_local {
     use predicates::boolean::PredicateBooleanExt;
     use predicates::prelude::predicate;
     use tempfile::tempdir;
-
     #[test]
     fn test_home_jump() {
         let mut cmd = cargo_bin_cmd!("ncd");

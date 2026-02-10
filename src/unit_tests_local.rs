@@ -71,6 +71,31 @@ pub fn setup_test_env() -> (tempfile::TempDir, PathBuf) {
     (tmp, root_path)
 }
 
+pub fn setup_complex_tree(root: &Path) {
+    // Level 1
+    let dirs = ["dir_a", "b_dir", "dir_c_dir"];
+    for d in dirs {
+        // Level 2: Each gets x, y, z and a unique folder
+        let l2_unique = format!("{}_unique", d);
+        for sub in ["x", "y", "z", &l2_unique] {
+            let path = root.join(d).join(sub);
+            std::fs::create_dir_all(&path).unwrap();
+
+            // Level 3: Nest a 'target' in some, but not all
+            if sub == "x" || sub.contains("unique") {
+                std::fs::create_dir_all(path.join("deep_target")).unwrap();
+            }
+        }
+    }
+}
+
+pub fn create_ncd_sandbox() -> (CwdGuard, tempfile::TempDir, std::path::PathBuf) {
+    let (_tmpdir, _root) = setup_test_env();
+    setup_complex_tree(&_root);
+    let _guard = CwdGuard::new(&_root);
+    (_guard, _tmpdir, _root)
+}
+
 #[cfg(all(test, feature="locals"))]
 mod local_battery_1 {
     use std::{env, fs};

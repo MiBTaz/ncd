@@ -14,10 +14,9 @@
 //! 4. **CDPATH Context**: Searching locations defined in the environment.
 
 use std::{env, fmt, process};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use std::path::{Path, PathBuf};
 use lexopt::{Parser, Arg};
-use std::ffi::OsString;
 
 #[cfg(test)]
 mod unit_tests_local;
@@ -179,7 +178,7 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
 
     let starts_with_sep = query.starts_with(std::path::is_separator);
     let (bare, is_anchored, components) = get_drive_components(query);
-    if (bare) {
+    if bare {
         return vec![PathBuf::from(query)];
     }
 
@@ -401,7 +400,7 @@ impl SearchEngine {
                 } else {
                     // Supports both 'exact match' and 'starts with' for fast typing.
                     let nl = name.to_lowercase();
-                    if (opts.dir_match == DirMatch::Fuzzy) {
+                    if opts.dir_match == DirMatch::Fuzzy {
                         nl == self.query_lower || nl.starts_with(&self.query_lower)
                     } else { // (opts.dir_match == DirMatch::AsIs
                         nl == self.query_lower
@@ -418,7 +417,7 @@ impl SearchEngine {
 fn get_drive_components(path: &str) -> (bool, bool, Vec<&str>)  {
     let mut anchored = false;
     let mut bare = false;
-    let mut parts: Vec<&str> = path.split(PATH_SEPARATORS).collect();
+    let parts: Vec<&str> = path.split(PATH_SEPARATORS).collect();
 
     if parts.is_empty() {
         return (bare, anchored, Vec::new());
@@ -511,13 +510,13 @@ fn get_search_roots(mock: &Option<std::ffi::OsString>) -> Vec<PathBuf> {
         // We refuse to "pollute" the search with the CWD or CDPATH.
         return vec![PathBuf::from(m)];
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut roots = Vec::new();
 
     // cwd is expected to be in the list even is it's dup'd in CDPATH.
     // so leave it in place
     if let Ok(cwd) = env::current_dir() {
-        let cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+        let _cwd2 = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
         // if seen.insert(cwd2) { roots.push(cwd.clone()); }
         roots.push(cwd.clone());
     }

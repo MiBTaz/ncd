@@ -18,6 +18,7 @@ strip = true        # Strip symbols automatically
 lexopt = "0.3.1"
 tempfile = "3.23.0"
 regex = "1.12.2"
+target = "2.1.0"
 
 
 [dev-dependencies]
