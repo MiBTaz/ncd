@@ -468,8 +468,9 @@ mod battery_1_mk4 {
         assert!(res[0].starts_with(&root));
     }
     #[test]
-    fn test_root_anchored_logic_mk2() {
+    fn test_root_anchored_logic_mk3() {
         let (_tmp, root) = setup_test_env();
+        let _guard = CwdGuard::new(&root);
         // Passing 'root' as mock_path allows the engine to treat the temp dir as the drive root
         let opts = get_opts(CdMode::Origin, false, Some(root.into_os_string()));
 
@@ -1556,7 +1557,7 @@ mod battery_3 {
     use std::{env};
     use std::path::PathBuf;
     use crate::{evaluate_jump, handle_ellipsis, CdMode};
-    use crate::unit_tests_local::{get_opts, setup_test_env, CwdGuard};
+    use crate::unit_tests_local::{create_ncd_sandbox, get_opts, setup_test_env, CwdGuard};
 
     #[test]
     fn test_ellipsis_relative_climb_resolved() {
@@ -1597,12 +1598,15 @@ mod battery_3 {
     }
     #[test]
     fn test_ellipsis_relative_to_dot() {
-        let base = PathBuf::from(".");
-        let matches = handle_ellipsis("...", base); // 3 dots = 2 pops
+        let (_guard, _temp, root) = create_ncd_sandbox();
+        let base = &root;
+        let matches = handle_ellipsis("...", base.to_path_buf());
 
-        let actual_root = PathBuf::from(r"V:\");
-        assert_eq!(matches[0].canonicalize().unwrap(), actual_root.canonicalize().unwrap());
-    }    #[test]
+        // Instead of V:\, use the parent of your sandbox root
+        let expected = root.parent().unwrap_or(&root);
+        assert_eq!(matches[0].canonicalize().unwrap(), expected.canonicalize().unwrap());
+    }
+    #[test]
     fn test_ellipsis_drive_persistence() {
         // On Windows, the drive is the floor.
         // We want to make sure the loop doesn't spin forever if it hits C:\
@@ -2706,10 +2710,11 @@ pub mod aggregate_series {
         std::fs::create_dir(&absolute_target).unwrap();
 
         let opts = test_opts();
-        // Even if CDPATH is empty, an absolute path should work
-        let res = evaluate_jump(absolute_target.to_str().unwrap(), &opts);
+        // Use the canonical path to ensure separators match what the OS expects
+        let query = absolute_target.to_string_lossy().to_string();
+        let res = evaluate_jump(&query, &opts);
 
-        assert_eq!(res.len(), 1);
+        assert_eq!(res.len(), 1, "Failed to resolve absolute path: {}", query);
         assert_eq!(res[0].canonicalize().unwrap(), absolute_target.canonicalize().unwrap());
     }
     #[test]
