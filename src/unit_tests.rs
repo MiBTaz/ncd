@@ -2850,13 +2850,13 @@ pub mod github_fails {
 
         let opts = test_opts();
         let query = absolute_target.to_string_lossy().to_string();
-
-        println!("DEBUG [bypass]: query='{}'", query);
-        println!("DEBUG [bypass]: exists={}", absolute_target.exists());
-
         let res = evaluate_jump(&query, &opts);
 
-        assert_eq!(res.len(), 1, "Failed to resolve absolute path: {}. Got {} results.", query, res.len());
+        // Include metadata in the error message for CI visibility
+        assert_eq!(res.len(), 1,
+                   "\n[DEBUG] Query: {}\n[DEBUG] Root: {:?}\n[DEBUG] Target Exists: {}\n[DEBUG] Results: {:?}",
+                   query, root, absolute_target.exists(), res);
+
         assert_eq!(res[0].canonicalize().unwrap(), absolute_target.canonicalize().unwrap());
     }
 
@@ -2867,13 +2867,12 @@ pub mod github_fails {
         let opts = get_opts(CdMode::Origin, false, Some(root.clone().into_os_string()));
 
         let query = format!("{}Projects", std::path::MAIN_SEPARATOR);
-        println!("DEBUG [root_anchor]: root='{:?}'", root);
-        println!("DEBUG [root_anchor]: query='{}'", query);
-
         let result = evaluate_jump(&query, &opts);
-        println!("DEBUG [root_anchor]: results_len={}", result.len());
 
-        assert!(!result.is_empty(), "Search failed for root anchor. Path separator: {}", std::path::MAIN_SEPARATOR);
+        assert!(!result.is_empty(),
+                "\n[DEBUG] Root: {:?}\n[DEBUG] Query: {}\n[DEBUG] Sep: {}\n[DEBUG] Result Count: {}",
+                root, query, std::path::MAIN_SEPARATOR, result.len());
+
         let path_str = result[0].to_string_lossy();
         assert!(path_str.contains("Projects"), "Path missing 'Projects': {}", path_str);
     }
@@ -2881,17 +2880,16 @@ pub mod github_fails {
     #[test]
     fn test_ellipsis_relative_to_dot() {
         let (_guard, _temp, root) = create_ncd_sandbox();
-        println!("DEBUG [ellipsis]: root='{:?}'", root);
-
         let matches = handle_ellipsis("...", root.to_path_buf());
-        let expected = root.parent().unwrap_or(&root);
+        let expected = root.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| root.clone());
 
-        if !matches.is_empty() {
-            println!("DEBUG [ellipsis]: actual='{:?}'", matches[0]);
-            println!("DEBUG [ellipsis]: expected='{:?}'", expected);
-        }
+        assert!(!matches.is_empty(),
+                "\n[DEBUG] Root: {:?}\n[DEBUG] Expected Parent: {:?}\n[DEBUG] Matches: {:?}",
+                root, expected, matches);
 
-        assert!(!matches.is_empty(), "Ellipsis returned no matches");
-        assert_eq!(matches[0].canonicalize().unwrap(), expected.canonicalize().unwrap());
+        assert_eq!(matches[0].canonicalize().unwrap(), expected.canonicalize().unwrap(),
+                   "\n[DEBUG] Mismatch!\nActual: {:?}\nExpected: {:?}", matches[0], expected);
     }
 }
+
+
