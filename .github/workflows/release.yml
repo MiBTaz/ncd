@@ -2,10 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - master
-    tags:
-      - 'v*'
+    branches: [ master ]
+    tags: [ 'v*' ]
 
 permissions:
   contents: write
@@ -18,6 +16,15 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run Standard Tests (Doc-tests)
+        run: cargo test --doc
+
+      - name: Run Nextest (Unit & Integration)
+        run: cargo nextest run
 
       - name: Build Release
         run: cargo build --release
