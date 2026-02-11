@@ -180,7 +180,7 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         let full_path = if Path::new(&query).is_absolute() { PathBuf::from(&query) } else { base.join(&query) };
         if full_path.exists() {
             if let Ok(p) = full_path.canonicalize() {
-                let s = p.to_string_lossy().replace(r"\\?\", "");
+                // let s = p.to_string_lossy().replace(r"\\?\", "");
                 return vec![PathBuf::from(s)];
             }
         }
