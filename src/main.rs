@@ -175,6 +175,9 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     let query_check = raw_query.trim();
     if query_check.is_empty() { return vec![]; }
     let query = PathBuf::from(query_check).to_string_lossy().to_string();
+    if let Ok(p) = PathBuf::from(query_check).canonicalize() {
+        if p.is_dir() { return vec![p]; }
+    }
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let starts_with_sep = query.starts_with(std::path::is_separator);
