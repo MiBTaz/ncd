@@ -172,12 +172,13 @@ fn run() -> Result<(), NcdError> {
 /// The central brain of NCD. It deconstructs the user query and routes it
 /// through specialized logic handlers (Ellipsis, Anchors, or CDPATH Search).
 pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
-    let query = raw_query.trim();
-    if query.is_empty() { return vec![]; }
+    let query_check = raw_query.trim();
+    if query_check.is_empty() { return vec![]; }
+    let query = PathBuf::from(query_check).to_string_lossy().to_string();
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let starts_with_sep = query.starts_with(std::path::is_separator);
-    let (bare, is_anchored, components) = get_drive_components(query);
+    let (bare, is_anchored, components) = get_drive_components(&query);
     if bare {
         return vec![PathBuf::from(query)];
     }

@@ -2859,6 +2859,7 @@ pub mod github_fails {
         println!("[TRACE] components: {:?}", p.components().collect::<Vec<_>>());
 
         let res = evaluate_jump(&query, &test_opts());
+        println!("[TRACE] res: {:?}", res);
         assert!(!res.is_empty(),
                 "\nABS_FAIL:\nQuery: {}\nExists: {}\nIsAbs: {}\nComponents: {:?}\nResults: {:?}",
                 query, target.exists(), Path::new(&query).is_absolute(),
