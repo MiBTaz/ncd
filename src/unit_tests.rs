@@ -1654,8 +1654,11 @@ mod battery_3 {
         let query = format!("{}{}", root.display(), r"\Projects");
         let result = evaluate_jump(&query, &opts);
 
+        let root = root.canonicalize().unwrap().to_string_lossy().replace(r"\\?\", "");
+        let root = PathBuf::from(root);
+
         assert!(!result.is_empty(), "Result should not be empty for: {}", query);
-        assert!(result[0].starts_with(&root), "Result escaped the mock root: {:?}", result[0]);
+        assert!(result[0].starts_with(&root), "Result escaped: {:?} vs {:?}", result[0], root);
     }
 }
 
