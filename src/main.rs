@@ -225,7 +225,7 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
 
             let found = if is_base_cwd {
                 // First segment: check CDPATH/CWD
-                search_cdpath(segment, opts)
+                search_by_fullname(&path, &segment.to_string(), opts)
             } else {
                 // Sub-segments: LOCK to the specific folder found
                 let locked_opts = SearchOptions {
@@ -235,7 +235,7 @@ fn resolve_path_segments(matches: Vec<PathBuf>, mut segments: Vec<&str>, opts: &
                     dir_match: opts.dir_match,
                     mock_path: Some(path.clone().into_os_string()),
                 };
-                search_cdpath(segment, &locked_opts)
+                search_by_fullname(&path, &segment.to_string(), &locked_opts)
             };
 
             next_matches.extend(found);
@@ -414,6 +414,13 @@ impl SearchEngine {
 }
 
 // --- UTILITIES & SYSTEM HELPERS ---
+fn search_by_fullname(path: &PathBuf, dir: &String, opts: &SearchOptions) -> Vec<PathBuf> {
+    let segment = path.join(dir).canonicalize().ok()
+        .and_then(|canon| canon.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| dir.to_string());
+    search_cdpath(&segment, opts)
+}
+
 fn get_drive_components(path: &str) -> (bool, bool, Vec<&str>)  {
     let mut anchored = false;
     let mut bare = false;
