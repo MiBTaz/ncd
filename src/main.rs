@@ -176,17 +176,6 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
     if query.is_empty() { return vec![]; }
     let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    if !query.chars().all(|c| c == '.') {
-        let full_path = if Path::new(&query).is_absolute() { PathBuf::from(&query) } else { base.join(&query) };
-        if full_path.exists() {
-            if let Ok(p) = full_path.canonicalize() {
-                // let s = p.to_string_lossy().replace(r"\\?\", "");
-                // return vec![PathBuf::from(s)];
-                return vec![PathBuf::from(p)];
-            }
-        }
-    }
-
     let starts_with_sep = query.starts_with(std::path::is_separator);
     let (bare, is_anchored, components) = get_drive_components(query);
     if bare {
