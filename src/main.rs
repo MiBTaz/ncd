@@ -181,7 +181,8 @@ pub fn evaluate_jump(raw_query: &str, opts: &SearchOptions) -> Vec<PathBuf> {
         if full_path.exists() {
             if let Ok(p) = full_path.canonicalize() {
                 // let s = p.to_string_lossy().replace(r"\\?\", "");
-                return vec![PathBuf::from(s)];
+                // return vec![PathBuf::from(s)];
+                return vec![PathBuf::from(p)];
             }
         }
     }
